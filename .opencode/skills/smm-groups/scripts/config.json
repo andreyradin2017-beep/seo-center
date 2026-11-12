@@ -1,0 +1,15 @@
+{
+  "locale": "ru-RU",
+  "timezoneId": "Europe/Moscow",
+  "profileDir": "pw-profile",
+  "scrollPauseMs": 1300,
+  "maxScrolls": 80,
+  "headless": true,
+  "tg": {
+    "preview": true,
+    "maxBeforePages": 80
+  },
+  "max": {
+    "enabled": true
+  }
+}

@@ -1,0 +1,27 @@
+node_modules/
+seo-center-archives/
+seo-results/
+seo-content/
+seo-nav/
+.playwright-mcp/
+*.log
+
+# Секреты и персональные данные — никогда не коммитить
+.env
+.env.*
+*.key
+*.pem
+**/api-session.json
+**/pw-profile/
+.opencode/brand-context/
+.opencode/seo-cache/
+.opencode/uploads/
+.opencode/plugin/bg.png
+!.opencode/plugin/bg.png
+
+# Служебное
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+*.tmp

@@ -1,0 +1,11 @@
+[
+  { "key": "post_url",              "title": "Ссылка на пост" },
+  { "key": "published_at",          "title": "Дата публикации" },
+  { "key": "likes",                 "title": "Лайки" },
+  { "key": "reposts",               "title": "Репосты" },
+  { "key": "votes",                 "title": "Голоса" },
+  { "key": "comments",              "title": "Комментарии" },
+  { "key": "views_total",           "title": "Просмотры всего" },
+  { "key": "hashtags",              "title": "Хештег поста" },
+  { "key": "text",                  "title": "Текст поста (без хештега)" }
+]
