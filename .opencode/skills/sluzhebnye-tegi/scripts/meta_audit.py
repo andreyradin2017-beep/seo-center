@@ -304,6 +304,165 @@ def find_cannibalization(pages, threshold=0.6):
     return pairs
 
 
+# ---------- E-E-A-T аудит ----------
+def extract_author(soup):
+    """Ищет автора страницы: meta author, rel=author, текст 'Автор'."""
+    # meta[name=author]
+    el = soup.find("meta", attrs={"name": re.compile("^author$", re.I)})
+    if el and el.get("content"):
+        return el["content"].strip()
+    # link[rel=author]
+    el = soup.find("link", attrs={"rel": re.compile("^author$", re.I)})
+    if el and el.get("href"):
+        return el["href"].strip()
+    # текст рядом со словом "Автор"
+    text = soup.get_text(" ", strip=True)
+    m = re.search(r"Автор[:\s]+([^\n\|,;]{2,80})", text, re.I)
+    if m:
+        return m.group(1).strip()
+    return ""
+
+
+def extract_date(soup, kind="published"):
+    """Ищет дату публикации/обновления: article:published_time, article:modified_time."""
+    prop = "article:published_time" if kind == "published" else "article:modified_time"
+    el = soup.find("meta", attrs={"property": re.compile(f"^{prop}$", re.I)})
+    if el and el.get("content"):
+        return el["content"].strip()
+    # datePublished / dateModified в JSON-LD или microdata
+    el = soup.find(attrs={"itemprop": re.compile(f"^{kind}Date$", re.I)})
+    if el and el.get("content"):
+        return el["content"].strip()
+    return ""
+
+
+def extract_contact_info(soup):
+    """Ищет контактную информацию: телефон, email, адрес."""
+    text = soup.get_text(" ", strip=True)
+    phones = re.findall(r"\+?\d[\d\s\-\(\)]{7,}\d", text)
+    phones = [p for p in phones if len(re.sub(r"\D", "", p)) >= 10]
+    emails = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", text)
+    addresses = []
+    m = re.search(r"(г[.\s]?\s*[\w\s\-]+,\s*[\w\s\-]+,\s*[\w\s\-]+)", text, re.I)
+    if m:
+        addresses.append(m.group(1).strip()[:120])
+    return {
+        "phones": list(dict.fromkeys(phones))[:5],
+        "emails": list(dict.fromkeys(emails))[:5],
+        "addresses": addresses[:3],
+    }
+
+
+def find_privacy_policy(html_map, host):
+    """Ищет страницу политики конфиденциальности по URL и тексту."""
+    for u, html in html_map.items():
+        p = urlparse(u)
+        path = p.path.lower()
+        if any(k in path for k in ("privacy", "politika", "private", "confidential")):
+            return u
+        soup = BeautifulSoup(html, "html.parser")
+        text = soup.get_text(" ", strip=True).lower()
+        if "политика конфиденциальности" in text or "privacy policy" in text:
+            return u
+    return None
+
+
+def find_certificates(html_map, host):
+    """Ищет страницы с сертификатами/лицензиями по URL и тексту."""
+    certs = []
+    for u, html in html_map.items():
+        p = urlparse(u)
+        path = p.path.lower()
+        if any(k in path for k in ("cert", "sert", "license", "licens", "doc", "dokument")):
+            soup = BeautifulSoup(html, "html.parser")
+            text = soup.get_text(" ", strip=True).lower()
+            if any(k in text for k in ("сертификат", "лицензия", "certificate", "license", " declaración de conformidad")):
+                certs.append(u)
+    return certs[:10]
+
+
+def eeat_audit(pages, html_map, host):
+    """Проверка E-E-A-T: автор, дата, контакты, политика конфиденциальности, сертификаты."""
+    results = {
+        "has_author": False,
+        "has_published_date": False,
+        "has_modified_date": False,
+        "has_contacts": False,
+        "has_privacy_policy": False,
+        "has_certificates": False,
+        "author": "",
+        "published_date": "",
+        "modified_date": "",
+        "contacts": {},
+        "privacy_url": "",
+        "cert_urls": [],
+        "issues": [],
+    }
+
+    # Проверяем главную и несколько ключевых страниц на автора и даты
+    key_pages = [p for p in pages if p.get("section") in ("Главная", "Новости", "Прочее")][:10]
+    for p in key_pages:
+        # Нужно пере파рить HTML для извлечения meta-тегов
+        pass
+
+    # Проще: пробежаться по html_map и искать на страницах
+    for u, html in html_map.items():
+        soup = BeautifulSoup(html, "html.parser")
+        author = extract_author(soup)
+        pub_date = extract_date(soup, "published")
+        mod_date = extract_date(soup, "modified")
+
+        if author and not results["has_author"]:
+            results["has_author"] = True
+            results["author"] = author
+        if pub_date and not results["has_published_date"]:
+            results["has_published_date"] = True
+            results["published_date"] = pub_date
+        if mod_date and not results["has_modified_date"]:
+            results["has_modified_date"] = True
+            results["modified_date"] = mod_date
+
+        if results["has_author"] and results["has_published_date"] and results["has_modified_date"]:
+            break
+
+    # Контакты — ищем на страницах с разделом "Контакты" или главной
+    for p in pages:
+        if p.get("section") in ("Контакты", "Главная"):
+            # найти HTML для этой страницы
+            html = html_map.get(p["url"], "")
+            if html:
+                soup = BeautifulSoup(html, "html.parser")
+                contacts = extract_contact_info(soup)
+                if contacts["phones"] or contacts["emails"] or contacts["addresses"]:
+                    results["has_contacts"] = True
+                    results["contacts"] = contacts
+                    break
+
+    # Политика конфиденциальности
+    results["privacy_url"] = find_privacy_policy(html_map, host)
+    results["has_privacy_policy"] = bool(results["privacy_url"])
+
+    # Сертификаты
+    results["cert_urls"] = find_certificates(html_map, host)
+    results["has_certificates"] = bool(results["cert_urls"])
+
+    # Формируем проблемы
+    if not results["has_author"]:
+        results["issues"].append("нет автора контента (E-E-A-T: автор)")
+    if not results["has_published_date"]:
+        results["issues"].append("нет даты публикации (E-E-A-T: дата)")
+    if not results["has_modified_date"]:
+        results["issues"].append("нет даты обновления (E-E-A-T: актуальность)")
+    if not results["has_contacts"]:
+        results["issues"].append("не найдены контактные данные (телефон, email, адрес)")
+    if not results["has_privacy_policy"]:
+        results["issues"].append("не найдена страница политики конфиденциальности")
+    if not results["has_certificates"]:
+        results["issues"].append("не найдены страницы с сертификатами/лицензиями")
+
+    return results
+
+
 def detect_brand(home_title, host, explicit=None):
     if explicit:
         return explicit.strip()
@@ -564,6 +723,9 @@ def main():
         cann_urls.add(d["url_a"])
         cann_urls.add(d["url_b"])
 
+    # E-E-A-T аудит (автор, дата, контакты, политика, сертификаты)
+    eeat = eeat_audit(pages, html_map, host)
+
     # Страница не считается проблемным дублом title/description, если на неё
     # стоит rel=canonical на другую страницу группы (пагинация, слэш/без слэша,
     # фильтры и т.п.). Остальные — реальные дубли.
@@ -664,6 +826,9 @@ def main():
         f"(порог совпадения {NEAR_DUPE_THRESHOLD})." if near_dupes else "Ближних дублей контента не выявлено.",
         f"Каннибализация title: {len(cannibalization)} пар страниц с близкими title "
         f"(порог совпадения слов {CANNIBALIZATION_THRESHOLD})." if cannibalization else "Каннибализации title не выявлено.",
+        f"E-E-A-T: автор — {'есть' if eeat['has_author'] else 'нет'}, дата публикации — {'есть' if eeat['has_published_date'] else 'нет'}, "
+        f"дата обновления — {'есть' if eeat['has_modified_date'] else 'нет'}, контакты — {'есть' if eeat['has_contacts'] else 'нет'}, "
+        f"политика конфиденциальности — {'есть' if eeat['has_privacy_policy'] else 'нет'}, сертификаты — {'есть' if eeat['has_certificates'] else 'нет'}.",
         f"Всего требуется доработка тегов на {need_fix} из {total} страниц.",
     ]
     if total and need_fix == 0:
@@ -683,6 +848,9 @@ def main():
         "чтобы поисковик не склеивал их сам и не размывал релевантность.",
         "Каннибализация title: пересмотрите title и H1 каннибализирующих страниц, чтобы каждая страница "
         "отвечала на свой уникальный запрос и не конкурировала с другой за те же позиции.",
+        "E-E-A-T: укажите автора контента и даты публикации/обновления (meta author, article:published_time, "
+        "article:modified_time), добавьте контактные данные (телефон, email, адрес), страницу политики "
+        "конфиденциальности и сертификаты/лицензии — это особенно важно для YMYL-сайтов (медицина, питание, финансы).",
     ]
     semcore_note = ("Теги составлены по приложенному семантическому ядру." if semcore
                     else "Теги составлены по базовым правилам; при наличии семантического ядра рекомендуется "
