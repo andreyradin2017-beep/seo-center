@@ -213,6 +213,97 @@ def classify(url, host):
     return "Прочее"
 
 
+# ---------- Near-dupes и каннибализация ----------
+def text_ngrams(text, n=5):
+    """Набор n-словных сочетаний текста (без стоп-символов, в нижнем регистре)."""
+    words = re.findall(r"[а-яёa-z0-9]+", text.lower())
+    return {" ".join(words[i:i + n]) for i in range(len(words) - n + 1)} if len(words) >= n else set()
+
+
+def containment(a, b):
+    """Доля общих n-грамм от МЕНЬШЕГО набора (контейнерный коэффициент, не Жаккар)."""
+    if not a or not b:
+        return 0.0
+    return len(a & b) / min(len(a), len(b))
+
+
+def find_near_dupes(pages, threshold=0.45, n=5):
+    """Пары страниц с близким основным контентом (near-dupes).
+
+    Страница не считается дублем, если на ней стоит rel=canonical на другую
+    страницу группы (пагинация, фильтры). Возвращает список пар:
+    (url_a, url_b, score, section_a, section_b).
+    """
+    ngrams = {}
+    for p in pages:
+        txt = p.get("text") or ""
+        ngrams[p["url"]] = text_ngrams(txt, n)
+
+    dupes = []
+    urls = [p["url"] for p in pages]
+    for i in range(len(urls)):
+        for j in range(i + 1, len(urls)):
+            ua, ub = urls[i], urls[j]
+            pa, pb = next(p for p in pages if p["url"] == ua), next(p for p in pages if p["url"] == ub)
+            # Если на одной из страниц стоит canonical на другую — не дубль (закрыто каноником).
+            ca, cb = pa.get("canonical") or "", pb.get("canonical") or ""
+            if ca and group_key(ca) == group_key(ub):
+                continue
+            if cb and group_key(cb) == group_key(ua):
+                continue
+            score = containment(ngrams[ua], ngrams[ub])
+            if score >= threshold:
+                dupes.append({
+                    "url_a": ua, "url_b": ub,
+                    "score": round(score, 3),
+                    "section_a": pa.get("section", ""),
+                    "section_b": pb.get("section", ""),
+                })
+    dupes.sort(key=lambda d: -d["score"])
+    return dupes
+
+
+def find_cannibalization(pages, threshold=0.6):
+    """Пары страниц с близкими title (кандидаты в каннибализацию).
+
+    Страница не считается каннибализирующей, если на ней стоит rel=canonical
+    на другую страницу группы.
+    """
+    canon_ok = {}
+    for p in pages:
+        c = p.get("canonical") or ""
+        canon_ok[p["url"]] = bool(c) and any(
+            group_key(c) == group_key(q["url"]) for q in pages if q["url"] != p["url"]
+        )
+
+    pairs = []
+    for i in range(len(pages)):
+        for j in range(i + 1, len(pages)):
+            pa, pb = pages[i], pages[j]
+            ta, tb = (pa.get("title") or "").strip().lower(), (pb.get("title") or "").strip().lower()
+            if not ta or not tb or ta == tb:
+                continue
+            # Быстрая проверка: общие значимые слова
+            wa = set(re.findall(r"[а-яёa-z0-9]+", ta))
+            wb = set(re.findall(r"[а-яёa-z0-9]+", tb))
+            if not wa or not wb:
+                continue
+            word_overlap = len(wa & wb) / min(len(wa), len(wb))
+            if word_overlap < threshold:
+                continue
+            if canon_ok.get(pa["url"]) or canon_ok.get(pb["url"]):
+                continue
+            pairs.append({
+                "url_a": pa["url"], "url_b": pb["url"],
+                "title_a": pa.get("title", ""), "title_b": pb.get("title", ""),
+                "score": round(word_overlap, 3),
+                "section_a": pa.get("section", ""),
+                "section_b": pb.get("section", ""),
+            })
+    pairs.sort(key=lambda d: -d["score"])
+    return pairs
+
+
 def detect_brand(home_title, host, explicit=None):
     if explicit:
         return explicit.strip()
@@ -459,6 +550,20 @@ def main():
     short_d = sum(1 for p in pages if p["desc"] and len(p["desc"]) < DESC_MIN)
     no_period = sum(1 for p in pages if p["desc"] and not p["desc"].rstrip().endswith((".", "!", "?")))
 
+    # Near-dupes и каннибализация (аналогично seo-factory-starter модулю dupes).
+    NEAR_DUPE_THRESHOLD = float(os.environ.get("NEAR_DUPE_BLOCK", "0.45"))
+    CANNIBALIZATION_THRESHOLD = float(os.environ.get("CANNIBALIZATION_BLOCK", "0.6"))
+    near_dupes = find_near_dupes(pages, threshold=NEAR_DUPE_THRESHOLD)
+    cannibalization = find_cannibalization(pages, threshold=CANNIBALIZATION_THRESHOLD)
+    near_dupe_urls = set()
+    for d in near_dupes:
+        near_dupe_urls.add(d["url_a"])
+        near_dupe_urls.add(d["url_b"])
+    cann_urls = set()
+    for d in cannibalization:
+        cann_urls.add(d["url_a"])
+        cann_urls.add(d["url_b"])
+
     # Страница не считается проблемным дублом title/description, если на неё
     # стоит rel=canonical на другую страницу группы (пагинация, слэш/без слэша,
     # фильтры и т.п.). Остальные — реальные дубли.
@@ -520,6 +625,10 @@ def main():
             if not p["desc"].rstrip().endswith((".", "!", "?")):
                 probs.append("нет точки в конце description")
         p["problems"] = probs
+        if p["url"] in near_dupe_urls:
+            p["problems"].append("ближний дубль контента (near-dupe)")
+        if p["url"] in cann_urls:
+            p["problems"].append("каннибализация title")
 
         # корректировка
         queries = semcore.get(canon(p["url"], host), [])
@@ -551,6 +660,10 @@ def main():
         f"без точки в конце — {no_period}.",
         f"Шаблонность: одинаковый title на множестве страниц ({len(titles)} уникальных title на {total} страниц)."
         if titles and max(titles.values()) > 1 else "Уникальность title: серьёзных проблем не выявлено.",
+        f"Ближние дубли контента: {len(near_dupes)} пар страниц с одинаковым/похожим основным текстом "
+        f"(порог совпадения {NEAR_DUPE_THRESHOLD})." if near_dupes else "Ближних дублей контента не выявлено.",
+        f"Каннибализация title: {len(cannibalization)} пар страниц с близкими title "
+        f"(порог совпадения слов {CANNIBALIZATION_THRESHOLD})." if cannibalization else "Каннибализации title не выявлено.",
         f"Всего требуется доработка тегов на {need_fix} из {total} страниц.",
     ]
     if total and need_fix == 0:
@@ -566,6 +679,10 @@ def main():
         "(ТОП по частотности — в title, остальные — в description).",
         "Листы «Текущие метатеги» и «Скорректированные метатеги» в «Контент_<хост>.xlsx» — рабочие: "
         "по ним вносить теги в CMS.",
+        "Ближние дубли контента: склейте 301-редиректом или добавьте rel=canonical на одну из страниц пары, "
+        "чтобы поисковик не склеивал их сам и не размывал релевантность.",
+        "Каннибализация title: пересмотрите title и H1 каннибализирующих страниц, чтобы каждая страница "
+        "отвечала на свой уникальный запрос и не конкурировала с другой за те же позиции.",
     ]
     semcore_note = ("Теги составлены по приложенному семантическому ядру." if semcore
                     else "Теги составлены по базовым правилам; при наличии семантического ядра рекомендуется "
@@ -598,6 +715,20 @@ def main():
         write_sheet(wb, "Скорректированные метатеги",
                     ["№", "URL", "Раздел", "Title (новый)", "Длина", "Description (новый)", "Длина", "Источник"],
                     fix_rows, [5, 44, 20, 50, 10, 60, 10, 12])
+
+    # Листы near-dupes и каннибализации (если есть пары)
+    if near_dupes:
+        nd_rows = [[i, d["url_a"], d["url_b"], d["section_a"], d["section_b"], d["score"]]
+                   for i, d in enumerate(near_dupes, 1)]
+        write_sheet(wb, "Ближние дубли контента",
+                    ["№", "URL А", "URL Б", "Раздел А", "Раздел Б", "Сходство"],
+                    nd_rows, [5, 60, 60, 20, 20, 12])
+    if cannibalization:
+        cb_rows = [[i, d["url_a"], d["url_b"], d["title_a"], d["title_b"], d["score"]]
+                   for i, d in enumerate(cannibalization, 1)]
+        write_sheet(wb, "Каннибализация title",
+                    ["№", "URL А", "URL Б", "Title А", "Title Б", "Сходство слов"],
+                    cb_rows, [5, 60, 60, 50, 50, 12])
     wb.save(xlsx)
 
     month_ru = {"January": "Январь", "February": "Февраль", "March": "Март", "April": "Апрель",
