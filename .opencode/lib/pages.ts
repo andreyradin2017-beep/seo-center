@@ -64,6 +64,7 @@ export function renderInsightsPage(): string {
   <button data-tab="overview" class="active">Сводка</button>
   <button data-tab="history">История</button>
   <button data-tab="issues">Проблемы</button>
+  <button data-tab="positions">Позиции</button>
   <button data-tab="schedule">Расписание</button>
   <button data-tab="settings">Интеграции</button>
 </div>
@@ -87,6 +88,23 @@ export function renderInsightsPage(): string {
       <label>Статус<select id="issues-status"><option value="">Все</option><option value="open">Открыта</option><option value="in_progress">В работе</option><option value="fixed">Исправлена</option><option value="ignored">Игнор</option></select></label>
     </div>
     <div id="issues"><p class="muted">Загрузка…</p></div>
+  </div>
+</section>
+
+<section id="tab-positions" class="hidden">
+  <div class="card"><h2>Позиции в поиске</h2>
+    <div class="row">
+      <label>Сайт<select id="positions-host"><option value="">Все сайты</option></select></label>
+      <label>Дата<input id="positions-date" type="date"></label>
+      <button class="act" id="positions-load">Загрузить</button>
+    </div>
+    <div id="positions"><p class="muted">Выберите сайт и дату, затем нажмите «Загрузить».</p></div>
+    <div class="row" style="margin-top:12px">
+      <label>Дата от<input id="positions-date-from" type="date"></label>
+      <label>Дата до<input id="positions-date-to" type="date"></label>
+      <button class="act" id="positions-delta">Дельта позиций</button>
+    </div>
+    <div id="positions-delta"><p class="muted"></p></div>
   </div>
 </section>
 
@@ -132,8 +150,8 @@ export function renderInsightsPage(): string {
 
   const script = CLIENT_HELPERS + `
 let state={tab:'overview',host:'',presets:[],settings:null};
-function show(tab){state.tab=tab;$$('.tabs button').forEach(function(b){b.classList.toggle('active',b.dataset.tab===tab)});['overview','history','issues','schedule','settings'].forEach(function(t){$('#tab-'+t).classList.toggle('hidden',t!==tab)});
-  if(tab==='history')loadHistory();if(tab==='issues')loadIssues();if(tab==='schedule'||tab==='settings')loadSettings()}
+function show(tab){state.tab=tab;$$('.tabs button').forEach(function(b){b.classList.toggle('active',b.dataset.tab===tab)});['overview','history','issues','positions','schedule','settings'].forEach(function(t){$('#tab-'+t).classList.toggle('hidden',t!==tab)});
+  if(tab==='history')loadHistory();if(tab==='issues')loadIssues();if(tab==='schedule'||tab==='settings')loadSettings();if(tab==='positions')loadPositions()}
 $$('.tabs button').forEach(function(b){b.onclick=function(){show(b.dataset.tab)}});
 
 async function loadOverview(){
@@ -204,6 +222,39 @@ async function loadSettings(){
   renderSchedules(r.settings.schedules||[]);
 }
 
+async function loadPositions(){
+  const host=$('#positions-host').value;
+  const date=$('#positions-date').value;
+  let url='/api/insights/positions?';
+  if(host) url+='host='+encodeURIComponent(host);
+  if(date) url+='&date='+encodeURIComponent(date);
+  const r=await api(url);
+  if(!r.ok){$('#positions').innerHTML='<p class="err">'+esc(r.error||'Ошибка')+'</p>';return}
+  if(!r.positions.length){$('#positions').innerHTML='<p class="muted">Нет позиций для выбранных фильтров.</p>';return}
+  let h='<table><tr><th>Дата</th><th>Запрос</th><th>Страница</th><th>Позиция</th><th>Клики</th><th>Показы</th><th>CTR</th><th>Источник</th></tr>';
+  r.positions.forEach(function(p){
+    h+='<tr><td>'+esc(p.date)+'</td><td>'+esc(p.query)+'</td><td>'+esc(p.page)+'</td><td>'+p.position+'</td><td>'+p.clicks+'</td><td>'+p.impressions+'</td><td>'+(p.ctr*100).toFixed(1)+'%</td><td>'+p.source+'</td></tr>';
+  });
+  $('#positions').innerHTML=h+'</table>';
+}
+
+async function loadPositionsDelta(){
+  const host=$('#positions-host').value;
+  const dateFrom=$('#positions-date-from').value;
+  const dateTo=$('#positions-date-to').value;
+  if(!host||!dateFrom||!dateTo){$('#positions-delta').innerHTML='<p class="err">Укажите сайт и обе даты</p>';return}
+  const r=await api('/api/insights/positions/delta?host='+encodeURIComponent(host)+'&dateFrom='+encodeURIComponent(dateFrom)+'&dateTo='+encodeURIComponent(dateTo));
+  if(!r.ok){$('#positions-delta').innerHTML='<p class="err">'+esc(r.error||'Ошибка')+'</p>';return}
+  if(!r.delta.length){$('#positions-delta').innerHTML='<p class="muted">Нет общих запросов для сравнения.</p>';return}
+  let h='<table><tr><th>Запрос</th><th>Страница</th><th>Было</th><th>Стало</th><th>Изменение</th></tr>';
+  r.delta.forEach(function(d){
+    const sign=d.change>0?'+':d.change<0?'-':'';
+    const cls=d.change<0?'class="ok"':d.change>0?'class="err"':'';
+    h+='<tr><td>'+esc(d.query)+'</td><td>'+esc(d.page)+'</td><td>'+(d.positionFrom==null?'—':d.positionFrom)+'</td><td>'+(d.positionTo==null?'—':d.positionTo)+'</td><td '+cls+'>'+sign+(d.change==null?'—':Math.abs(d.change))+'</td></tr>';
+  });
+  $('#positions-delta').innerHTML=h+'</table>';
+}
+
 function renderSchedules(list){
   if(!list.length){$('#schedules').innerHTML='<p class="muted">Расписаний нет.</p>';return}
   function nextRunText(s){
@@ -248,10 +299,15 @@ $('#issues-status').onchange=loadIssues;
 $('#issues-host').onchange=function(){state.host=this.value;loadIssues()};
 $('#history-host').onchange=function(){state.host=this.value;loadHistory()};
 
+$('#positions-load').onclick=async function(){$('#positions-load').disabled=true;await loadPositions();$('#positions-load').disabled=false;};
+$('#positions-delta').onclick=async function(){$('#positions-delta').disabled=true;await loadPositionsDelta();$('#positions-delta').disabled=false;};
+$('#positions-host').onchange=function(){$('#positions').innerHTML='<p class="muted">Выберите дату и нажмите «Загрузить».</p>';};
+$('#positions-date').onchange=function(){$('#positions').innerHTML='<p class="muted">Нажмите «Загрузить».</p>';};
+
 async function fillHostSelects(){
   const r=await api('/api/insights/overview');
   if(!r.ok)return;
-  ['#history-host','#issues-host'].forEach(function(s){const el=$(s);r.hosts.forEach(function(x){const o=document.createElement('option');o.value=x.host;o.textContent=x.host;el.appendChild(o)})});
+  ['#history-host','#issues-host','#positions-host'].forEach(function(s){const el=$(s);r.hosts.forEach(function(x){const o=document.createElement('option');o.value=x.host;o.textContent=x.host;el.appendChild(o)})});
 }
 loadOverview();fillHostSelects();
 `
