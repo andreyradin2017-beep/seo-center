@@ -307,7 +307,15 @@ export interface InsightsSettings {
   presets: { name: string; points: AuditPointRef[] }[]
   schedules: Schedule[]
   telegram: { token: string; chatId: string }
-  integrations: { psiKey: string; gscToken: string; webmasterToken: string; metrikaToken: string; metrikaCounter: string }
+  integrations: {
+    psiKey: string
+    gscToken: string
+    webmasterToken: string
+    metrikaToken: string
+    metrikaCounter: string
+    wordstatKey: string
+    wordstatFolderId: string
+  }
 }
 
 export const DEFAULT_SETTINGS: InsightsSettings = {
@@ -315,7 +323,15 @@ export const DEFAULT_SETTINGS: InsightsSettings = {
   presets: [],
   schedules: [],
   telegram: { token: "", chatId: "" },
-  integrations: { psiKey: "", gscToken: "", webmasterToken: "", metrikaToken: "", metrikaCounter: "" },
+  integrations: {
+    psiKey: "",
+    gscToken: "",
+    webmasterToken: "",
+    metrikaToken: "",
+    metrikaCounter: "",
+    wordstatKey: "",
+    wordstatFolderId: "",
+  },
 }
 
 export function readSettings(root: string): InsightsSettings {

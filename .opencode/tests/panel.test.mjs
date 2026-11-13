@@ -155,3 +155,14 @@ test("repeat carries depth parameters from the run", async () => {
   const queue = await json(await get("/api/audit-queue"))
   assert.ok(queue.body.jobs.some((j) => j.site === "https://example.org/"))
 })
+
+test("wordstat integration test endpoint works with key and fails without", async () => {
+  const ok = await json(await post("/api/insights/integrations/test", { kind: "wordstat", phrase: "купить котел" }))
+  assert.equal(ok.body.ok, false)
+  assert.equal(ok.body.result.kind, "wordstat")
+  assert.match(ok.body.result.error, /API-ключ/)
+
+  const empty = await json(await post("/api/insights/integrations/test", { kind: "wordstat" }))
+  assert.equal(empty.body.ok, false)
+  assert.equal(empty.body.result.kind, "wordstat")
+})

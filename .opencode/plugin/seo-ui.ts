@@ -15,7 +15,7 @@ import {
 import type { AuditReport, RunRecord } from "../lib/audit-store.ts"
 import { buildJsonLd, buildRobots, buildSitemap, jsonLdTemplate, urlsFromCsv } from "../lib/generators.ts"
 import { renderGeneratorsPage, renderInsightsPage } from "../lib/pages.ts"
-import { gscSites, metrikaSummary, psiCheck, webmasterHosts } from "../lib/integrations.ts"
+import { gscSites, metrikaSummary, psiCheck, webmasterHosts, wordstatFrequency } from "../lib/integrations.ts"
 
 const SKILL_EXTRACT = "seo-metatags-extract"
 const SKILL_METATAGS = "seo-metatags"
@@ -5408,6 +5408,10 @@ ${structureRules}`
             if (kind === "metrika") {
               const result = await metrikaSummary({ token: ints.metrikaToken, counterId: ints.metrikaCounter, startDate: iso(Date.now() - 30 * day), endDate: iso(Date.now()) })
               return Response.json({ ok: true, result })
+            }
+            if (kind === "wordstat") {
+              const result = await wordstatFrequency({ apiKey: ints.wordstatKey, folderId: ints.wordstatFolderId, phrases: [String(body.phrase || "купить котёл")] })
+              return Response.json({ ok: result.ok, result })
             }
             return Response.json({ ok: false, error: "Неизвестная интеграция" })
           }

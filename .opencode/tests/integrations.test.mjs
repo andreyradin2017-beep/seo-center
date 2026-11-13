@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { gscQueries, gscSites, metrikaSummary, psiCheck, webmasterHosts, webmasterIndexing } from "../lib/integrations.ts"
+import { gscQueries, gscSites, metrikaSummary, psiCheck, webmasterHosts, webmasterIndexing, wordstatFrequency } from "../lib/integrations.ts"
 
 function response(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body), json: async () => body }
@@ -211,4 +211,65 @@ test("non-2xx responses return status and body snippet", async () => {
   assert.equal(result.kind, "metrika")
   assert.match(result.error, /HTTP 403/)
   assert.match(result.error, /forbidden/)
+})
+
+test("Wordstat sends Api-Key and x-folder-id, maps phrases with frequencies", async () => {
+  const { calls, fetchImpl } = mockFetch(() => response({
+    phrases: [
+      { phrase: "купить котел", frequency: 1200 },
+      { phrase: "котел цена", frequency: 850 },
+    ],
+  }))
+
+  const result = await wordstatFrequency({
+    apiKey: "ws-key",
+    folderId: "b1gabc123",
+    phrases: ["купить котел", "котел цена"],
+    fetchImpl,
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.kind, "wordstat")
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].init.headers.Authorization, "Api-Key ws-key")
+  assert.equal(calls[0].init.headers["x-folder-id"], "b1gabc123")
+  assert.ok(calls[0].url.endsWith("/v2/wordstat/phrases"))
+
+  const body = JSON.parse(calls[0].init.body)
+  assert.deepEqual(body.phrases, ["купить котел", "котел цена"])
+
+  assert.deepEqual(result.data.phrases, [
+    { phrase: "купить котел", frequency: 1200, region: null },
+    { phrase: "котел цена", frequency: 850, region: null },
+  ])
+})
+
+test("Wordstat without API key fails and makes no request", async () => {
+  const { calls, fetchImpl } = mockFetch(() => response({}))
+  const result = await wordstatFrequency({ phrases: ["купить котел"], fetchImpl })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.kind, "wordstat")
+  assert.match(result.error, /API-ключ/)
+  assert.equal(calls.length, 0)
+})
+
+test("Wordstat without folderId fails and makes no request", async () => {
+  const { calls, fetchImpl } = mockFetch(() => response({}))
+  const result = await wordstatFrequency({ apiKey: "ws-key", phrases: ["купить котел"], fetchImpl })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.kind, "wordstat")
+  assert.match(result.error, /идентификатор каталога/)
+  assert.equal(calls.length, 0)
+})
+
+test("Wordstat without phrases fails and makes no request", async () => {
+  const { calls, fetchImpl } = mockFetch(() => response({}))
+  const result = await wordstatFrequency({ apiKey: "ws-key", folderId: "b1g", fetchImpl })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.kind, "wordstat")
+  assert.match(result.error, /хотя бы одну фразу/)
+  assert.equal(calls.length, 0)
 })

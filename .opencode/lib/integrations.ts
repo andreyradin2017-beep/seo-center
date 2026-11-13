@@ -1,6 +1,6 @@
 export type FetchLike = (url: string, init?: any) => Promise<{ ok: boolean; status: number; text(): Promise<string>; json(): Promise<any> }>
 
-export type IntegrationKind = "psi" | "gsc" | "webmaster" | "metrika"
+export type IntegrationKind = "psi" | "gsc" | "webmaster" | "metrika" | "wordstat"
 
 export interface IntegrationResult {
   ok: boolean
@@ -256,5 +256,52 @@ export async function metrikaSummary(input: { token: string; counterId: string; 
     kind: "metrika",
     summary: `Яндекс.Метрика ${input.counterId}: визиты ${data.visits}, пользователи ${data.users}, просмотры ${data.pageviews}`,
     data,
+  }
+}
+
+const WORDSTAT_URL = "https://search-api.cloud.yandex.net/v2/wordstat/phrases"
+
+export async function wordstatFrequency(input: {
+  apiKey: string
+  folderId: string
+  phrases: string[]
+  region?: number | string
+  fetchImpl?: FetchLike
+}): Promise<IntegrationResult> {
+  if (!input.apiKey) return fail("wordstat", "Яндекс.Вордстат: частотность фраз", "Нужен API-ключ Yandex Cloud (Search API): передайте apiKey")
+  if (!input.folderId) return fail("wordstat", "Яндекс.Вордстат: частотность фраз", "Нужен идентификатор каталога Yandex Cloud: передайте folderId")
+  if (!input.phrases || !Array.isArray(input.phrases) || input.phrases.length === 0) return fail("wordstat", "Яндекс.Вордстат: частотность фраз", "Укажите хотя бы одну фразу")
+
+  const summary = `Яндекс.Вордстат: частотность ${input.phrases.length} фраз`
+
+  const body = JSON.stringify({
+    phrases: input.phrases,
+    ...(input.region !== undefined ? { region: input.region } : {}),
+  })
+
+  const response = await apiJson(input.fetchImpl, "wordstat", summary, WORDSTAT_URL, {
+    method: "POST",
+    headers: {
+      ...auth("Api-Key", input.apiKey),
+      "Content-Type": "application/json",
+      "x-folder-id": input.folderId,
+    },
+    body,
+  })
+  if (!response.ok) return response
+
+  const json = response.json
+  const phrases = Array.isArray(json?.phrases) ? json.phrases : Array.isArray(json?.results) ? json.results : []
+  const data = phrases.map((p: any) => ({
+    phrase: String(p?.phrase ?? p?.query ?? ""),
+    frequency: num(p?.frequency ?? p?.total ?? p?.count) ?? 0,
+    region: p?.region ?? null,
+  }))
+
+  return {
+    ok: true,
+    kind: "wordstat",
+    summary: `Яндекс.Вордстат: получено ${data.length} фраз`,
+    data: { phrases: data },
   }
 }

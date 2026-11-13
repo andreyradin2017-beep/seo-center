@@ -122,6 +122,7 @@ export function renderInsightsPage(): string {
       <div><h2>Яндекс.Вебмастер</h2><label class="muted">OAuth-токен<input id="int-wm" placeholder="y0_Ag…"></label><div class="row" style="margin-top:8px"><button class="ghost" data-test="webmaster">Проверить</button></div></div>
       <div><h2>Google Search Console</h2><label class="muted">OAuth-токен<input id="int-gsc" placeholder="ya29…"></label><div class="row" style="margin-top:8px"><button class="ghost" data-test="gsc">Проверить</button></div></div>
       <div><h2>Яндекс.Метрика</h2><label class="muted">OAuth-токен<input id="int-metrika" placeholder="y0_Ag…"></label><label class="muted">Номер счётчика<input id="int-counter" placeholder="12345678"></label><div class="row" style="margin-top:8px"><button class="ghost" data-test="metrika">Проверить</button></div></div>
+      <div><h2>Яндекс.Вордстат</h2><label class="muted">API-ключ<input id="int-wordstat-key" placeholder="AQVN…"></label><label class="muted">Folder ID<input id="int-wordstat-folder" placeholder="b1g…"></label><div class="row" style="margin-top:8px"><button class="ghost" data-test="wordstat">Проверить</button></div></div>
     </div>
     <div class="row" style="margin-top:12px"><button class="act" id="int-save">Сохранить токены</button><button class="ghost" id="preset-save">Сохранить пресет пунктов…</button></div>
     <div id="int-result" style="margin-top:12px"></div>
@@ -199,7 +200,7 @@ async function loadSettings(){
   state.settings=r.settings;state.presets=r.settings.presets||[];
   const sel=$('#sch-preset');sel.innerHTML='<option value="">Как в последнем аудите</option>'+state.presets.map(function(p){return '<option value="'+esc(p.name)+'">'+esc(p.name)+'</option>'}).join('');
   const t=r.settings.telegram||{};$('#tg-token').value=t.token||'';$('#tg-chat').value=t.chatId||'';
-  const i=r.settings.integrations||{};$('#int-psi').value=i.psiKey||'';$('#int-wm').value=i.webmasterToken||'';$('#int-gsc').value=i.gscToken||'';$('#int-metrika').value=i.metrikaToken||'';$('#int-counter').value=i.metrikaCounter||'';
+  const i=r.settings.integrations||{};$('#int-psi').value=i.psiKey||'';$('#int-wm').value=i.webmasterToken||'';$('#int-gsc').value=i.gscToken||'';$('#int-metrika').value=i.metrikaToken||'';$('#int-counter').value=i.metrikaCounter||'';$('#int-wordstat-key').value=i.wordstatKey||'';$('#int-wordstat-folder').value=i.wordstatFolderId||'';
   renderSchedules(r.settings.schedules||[]);
 }
 
@@ -235,7 +236,7 @@ $('#sch-add').onclick=async function(){
   if(r.ok)renderSchedules(r.schedules);
 };
 $('#tg-save').onclick=async function(){const r=await api('/api/insights/telegram',{token:$('#tg-token').value.trim(),chatId:$('#tg-chat').value.trim()});$('#tg-save').textContent=r.ok?'Сохранено':'Ошибка';setTimeout(function(){$('#tg-save').textContent='Сохранить'},1500)};
-$('#int-save').onclick=async function(){const r=await api('/api/insights/integrations',{psiKey:$('#int-psi').value.trim(),gscToken:$('#int-gsc').value.trim(),webmasterToken:$('#int-wm').value.trim(),metrikaToken:$('#int-metrika').value.trim(),metrikaCounter:$('#int-counter').value.trim()});$('#int-save').textContent=r.ok?'Сохранено':'Ошибка';setTimeout(function(){$('#int-save').textContent='Сохранить токены'},1500)};
+$('#int-save').onclick=async function(){const r=await api('/api/insights/integrations',{psiKey:$('#int-psi').value.trim(),gscToken:$('#int-gsc').value.trim(),webmasterToken:$('#int-wm').value.trim(),metrikaToken:$('#int-metrika').value.trim(),metrikaCounter:$('#int-counter').value.trim(),wordstatKey:$('#int-wordstat-key').value.trim(),wordstatFolderId:$('#int-wordstat-folder').value.trim()});$('#int-save').textContent=r.ok?'Сохранено':'Ошибка';setTimeout(function(){$('#int-save').textContent='Сохранить токены'},1500)};
 $('#preset-save').onclick=function(){alert('Пресеты пунктов сохраняются на вкладке «SEO-аудит» кнопкой «Сохранить пресет».')};
 $$('[data-test]').forEach(function(b){b.onclick=async function(){
   b.disabled=true;$('#int-result').innerHTML='<p class="muted">Проверяю…</p>';
