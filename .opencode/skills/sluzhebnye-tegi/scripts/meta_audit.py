@@ -463,6 +463,74 @@ def eeat_audit(pages, html_map, host):
     return results
 
 
+# ---------- Покрытие sitemap ----------
+def get_sitemap_urls(base, host, cache_dir=None):
+    """Собирает URL из sitemap.xml (включая sitemapindex)."""
+    from xml.etree import ElementTree as ET
+    urls = []
+    for sm in ("/sitemap.xml", "/sitemap_index.xml", "/sitemap/"):
+        try:
+            r = get(urljoin(base, sm), timeout=25, cache_dir=cache_dir)
+            if r.status_code != 200 or "<" not in r.text[:200]:
+                continue
+            root = ET.fromstring(r.content)
+            ns = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+            for e in root.iter():
+                if e.tag.endswith("loc") and e.text:
+                    l = e.text.strip()
+                    if not l.lower().startswith("http"):
+                        l = urljoin(base, l)
+                    if same_host(l, host):
+                        urls.append(l)
+            if urls:
+                return urls
+        except Exception:
+            continue
+    return urls
+
+
+def check_sitemap_coverage(base, host, cache_dir=None):
+    """Проверяет покрытие sitemap: какие URL из sitemap доступны (200), а какие нет."""
+    sitemap_urls = get_sitemap_urls(base, host, cache_dir)
+    if not sitemap_urls:
+        return {
+            "sitemap_urls": 0,
+            "accessible": 0,
+            "inaccessible": 0,
+            "inaccessible_list": [],
+            "coverage_pct": 0,
+            "issues": ["sitemap.xml не найден или пуст"],
+        }
+
+    inaccessible = []
+    accessible = 0
+    for u in sitemap_urls:
+        try:
+            r = get(u, timeout=25, cache_dir=cache_dir)
+            if r.status_code == 200:
+                accessible += 1
+            else:
+                inaccessible.append({"url": u, "status": r.status_code})
+        except Exception:
+            inaccessible.append({"url": u, "status": "error"})
+
+    coverage_pct = round(accessible / len(sitemap_urls) * 100, 1) if sitemap_urls else 0
+    issues = []
+    if inaccessible:
+        issues.append(f"{len(inaccessible)} URL из sitemap недоступны (не 200)")
+    if coverage_pct < 100:
+        issues.append(f"Покрытие sitemap: {coverage_pct}% ({accessible}/{len(sitemap_urls)})")
+
+    return {
+        "sitemap_urls": len(sitemap_urls),
+        "accessible": accessible,
+        "inaccessible": len(inaccessible),
+        "inaccessible_list": inaccessible[:50],
+        "coverage_pct": coverage_pct,
+        "issues": issues,
+    }
+
+
 def detect_brand(home_title, host, explicit=None):
     if explicit:
         return explicit.strip()
@@ -726,6 +794,9 @@ def main():
     # E-E-A-T аудит (автор, дата, контакты, политика, сертификаты)
     eeat = eeat_audit(pages, html_map, host)
 
+    # Покрытие sitemap (какие URL из sitemap доступны)
+    sitemap_coverage = check_sitemap_coverage(base, host, cache_dir=args.cache)
+
     # Страница не считается проблемным дублом title/description, если на неё
     # стоит rel=canonical на другую страницу группы (пагинация, слэш/без слэша,
     # фильтры и т.п.). Остальные — реальные дубли.
@@ -829,6 +900,8 @@ def main():
         f"E-E-A-T: автор — {'есть' if eeat['has_author'] else 'нет'}, дата публикации — {'есть' if eeat['has_published_date'] else 'нет'}, "
         f"дата обновления — {'есть' if eeat['has_modified_date'] else 'нет'}, контакты — {'есть' if eeat['has_contacts'] else 'нет'}, "
         f"политика конфиденциальности — {'есть' if eeat['has_privacy_policy'] else 'нет'}, сертификаты — {'есть' if eeat['has_certificates'] else 'нет'}.",
+        f"Sitemap: {sitemap_coverage['sitemap_urls']} URL, доступно {sitemap_coverage['accessible']}, "
+        f"недоступно {sitemap_coverage['inaccessible']} (покрытие {sitemap_coverage['coverage_pct']}%)." if sitemap_coverage['sitemap_urls'] else "Sitemap.xml не найден.",
         f"Всего требуется доработка тегов на {need_fix} из {total} страниц.",
     ]
     if total and need_fix == 0:
@@ -851,6 +924,8 @@ def main():
         "E-E-A-T: укажите автора контента и даты публикации/обновления (meta author, article:published_time, "
         "article:modified_time), добавьте контактные данные (телефон, email, адрес), страницу политики "
         "конфиденциальности и сертификаты/лицензии — это особенно важно для YMYL-сайтов (медицина, питание, финансы).",
+        "Sitemap: проверьте недоступные URL из sitemap.xml (не 200 ответ) и добавьте отсутствующие страницы, "
+        "чтобы поисковики индексировали все важные разделы сайта.",
     ]
     semcore_note = ("Теги составлены по приложенному семантическому ядру." if semcore
                     else "Теги составлены по базовым правилам; при наличии семантического ядра рекомендуется "
