@@ -21,7 +21,7 @@ import sys
 from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlunparse, parse_qsl, urlencode
 
 try:
     import requests
@@ -47,8 +47,50 @@ import http_cache
 
 UA = {"User-Agent": "Mozilla/5.0 (compatible; SEO-audit/1.0)"}
 GENERIC_TITLES = {"компания", "главная", "сайт", "главная страница", "home", "index", "официальный сайт", ""}
-TITLE_MIN, TITLE_MAX = 30, 70
-DESC_MIN, DESC_MAX = 70, 200
+
+
+def load_audit_rules():
+    """Машиночитаемые правила аудита из .opencode/rules/audit-rules.json (единый источник)."""
+    rules_path = Path(__file__).resolve().parents[3] / "rules" / "audit-rules.json"
+    try:
+        import json as _json
+        return _json.loads(rules_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+_RULES = load_audit_rules()
+_META = _RULES.get("meta", {})
+_CANON = _RULES.get("canonical", {})
+TITLE_MIN = int(_META.get("title_min", 50))
+TITLE_MAX = int(_META.get("title_max", 100))
+DESC_MIN = int(_META.get("desc_min", 170))
+DESC_MAX = int(_META.get("desc_max", 250))
+CANON_IGNORE_PARAMS = set(_CANON.get("ignore_query_params", ["PAGEN_1", "PAGEN_2", "PAGEN", "page"]))
+CANON_STRIP_TRAILING_SLASH = bool(_CANON.get("strip_trailing_slash", True))
+
+
+def group_key(u):
+    """Нормализованный ключ страницы для группировки дублей: без служебных параметров и trailing slash."""
+    p = urlparse(u)
+    query = [(k, v) for k, v in parse_qsl(p.query) if k not in CANON_IGNORE_PARAMS]
+    path = p.path
+    if CANON_STRIP_TRAILING_SLASH and len(path) > 1 and path.endswith("/"):
+        path = path.rstrip("/")
+    return urlunparse((p.scheme, p.netloc, path, "", urlencode(query), ""))
+
+
+def extract_canonical(soup, page_url):
+    """Абсолютный URL из rel=canonical, или пустая строка."""
+    el = soup.find("link", attrs={"rel": re.compile("^canonical$", re.I)})
+    if not el or not el.get("href"):
+        return ""
+    href = el["href"].strip()
+    if not href:
+        return ""
+    abs_url = urljoin(page_url, href)
+    p = urlparse(abs_url)
+    return urlunparse((p.scheme, p.netloc, p.path or "/", "", p.query, ""))
 
 
 def canon(u, host):
@@ -393,10 +435,12 @@ def main():
                 if el:
                     break
             text = el.get_text(" ", strip=True) if el else ""
+            canonical = extract_canonical(soup, u)
             if not home_title and canon(u, host) == canon(base, host):
                 home_title = title
             pages.append({"url": u, "section": classify(u, host), "title": title.strip(),
-                          "desc": (desc or "").strip(), "h1": h1, "text": text})
+                          "desc": (desc or "").strip(), "h1": h1, "text": text,
+                          "canonical": canonical})
         except Exception as e:
             print("   !", u, e)
 
@@ -408,14 +452,48 @@ def main():
     descs = Counter(p["desc"].lower() for p in pages if p["desc"])
     no_title = sum(1 for p in pages if not p["title"])
     no_desc = sum(1 for p in pages if not p["desc"])
-    dup_title = sum(1 for p in pages if p["title"] and titles[p["title"].lower()] > 1)
-    dup_desc = sum(1 for p in pages if p["desc"] and descs[p["desc"].lower()] > 1)
     generic = sum(1 for p in pages if p["title"].strip().lower() in GENERIC_TITLES)
     long_t = sum(1 for p in pages if len(p["title"]) > TITLE_MAX)
     short_t = sum(1 for p in pages if p["title"] and len(p["title"]) < TITLE_MIN)
     long_d = sum(1 for p in pages if len(p["desc"]) > DESC_MAX)
     short_d = sum(1 for p in pages if p["desc"] and len(p["desc"]) < DESC_MIN)
     no_period = sum(1 for p in pages if p["desc"] and not p["desc"].rstrip().endswith((".", "!", "?")))
+
+    # Страница не считается проблемным дублом title/description, если на неё
+    # стоит rel=canonical на другую страницу группы (пагинация, слэш/без слэша,
+    # фильтры и т.п.). Остальные — реальные дубли.
+    def page_is_canon_clone(p):
+        c = p.get("canonical") or ""
+        return bool(c) and group_key(c) != group_key(p["url"])
+
+    dup_title_pages, dup_desc_pages = [], []
+    for p in pages:
+        t = p["title"].lower()
+        d = p["desc"].lower()
+        if p["title"] and titles[t] > 1:
+            group = [q for q in pages if q["title"].lower() == t]
+            if page_is_canon_clone(p):
+                c = p["canonical"]
+                if any(group_key(q["url"]) == group_key(c) for q in group):
+                    pass  # клон с канонической ссылкой — не дубль
+                else:
+                    dup_title_pages.append(p)
+            else:
+                dup_title_pages.append(p)
+        if p["desc"] and descs[d] > 1:
+            group = [q for q in pages if q["desc"].lower() == d]
+            if page_is_canon_clone(p):
+                c = p["canonical"]
+                if any(group_key(q["url"]) == group_key(c) for q in group):
+                    pass
+                else:
+                    dup_desc_pages.append(p)
+            else:
+                dup_desc_pages.append(p)
+    dup_title_urls = {p["url"] for p in dup_title_pages}
+    dup_desc_urls = {p["url"] for p in dup_desc_pages}
+    dup_title = len(dup_title_pages)
+    dup_desc = len(dup_desc_pages)
 
     for p in pages:
         probs = []
@@ -424,21 +502,21 @@ def main():
         else:
             if p["title"].strip().lower() in GENERIC_TITLES:
                 probs.append("шаблонный/неинформативный title")
-            if titles[p["title"].lower()] > 1:
+            if titles[p["title"].lower()] > 1 and p["url"] in dup_title_urls:
                 probs.append("дубль title")
             if len(p["title"]) > TITLE_MAX:
-                probs.append("title длиннее 70 симв.")
+                probs.append(f"title длиннее {TITLE_MAX} симв.")
             if len(p["title"]) < TITLE_MIN:
-                probs.append("title короче 30 симв.")
+                probs.append(f"title короче {TITLE_MIN} симв.")
         if not p["desc"]:
             probs.append("нет description")
         else:
-            if descs[p["desc"].lower()] > 1:
+            if descs[p["desc"].lower()] > 1 and p["url"] in dup_desc_urls:
                 probs.append("дубль description")
             if len(p["desc"]) > DESC_MAX:
-                probs.append("description длиннее 200 симв.")
+                probs.append(f"description длиннее {DESC_MAX} симв.")
             if len(p["desc"]) < DESC_MIN:
-                probs.append("description короче 70 симв.")
+                probs.append(f"description короче {DESC_MIN} симв.")
             if not p["desc"].rstrip().endswith((".", "!", "?")):
                 probs.append("нет точки в конце description")
         p["problems"] = probs
@@ -466,13 +544,11 @@ def main():
 
     need_fix = sum(1 for p in pages if p["problems"])
     problems = [
-        f"Description: отсутствует на {no_desc} страницах"
-        + (f"; дублируется на {dup_desc} страницах" if dup_desc else "")
-        + (f"; короче 70 символов — {short_d}" if short_d else "")
-        + (f"; длиннее 200 символов — {long_d}" if long_d else "")
-        + (f"; без точки в конце — {no_period}" if no_period else "") + ".",
-        f"Title: отсутствует на {no_title} страницах; дублируется на {dup_title} страницах; "
-        f"шаблонный/неинформативный — {generic}; длиннее 70 символов — {long_t}; короче 30 — {short_t}.",
+        f"Title: отсутствует на {no_title} страницах; дублируется (без канонической ссылки) на {dup_title} страницах; "
+        f"шаблонный/неинформативный — {generic}; длиннее {TITLE_MAX} символов — {long_t}; короче {TITLE_MIN} — {short_t}.",
+        f"Description: отсутствует на {no_desc} страницах; дублируется (без канонической ссылки) на {dup_desc} страницах; "
+        f"короче {DESC_MIN} символов — {short_d}; длиннее {DESC_MAX} символов — {long_d}; "
+        f"без точки в конце — {no_period}.",
         f"Шаблонность: одинаковый title на множестве страниц ({len(titles)} уникальных title на {total} страниц)."
         if titles and max(titles.values()) > 1 else "Уникальность title: серьёзных проблем не выявлено.",
         f"Всего требуется доработка тегов на {need_fix} из {total} страниц.",
@@ -480,11 +556,12 @@ def main():
     if total and need_fix == 0:
         problems = ["Проблем на сайте не обнаружено, исправления не требуются."]
     recommendations = [
-        "Title: 50–70 символов, уникальный для каждой страницы, с главным запросом в начале и названием "
+        "Title: " + str(TITLE_MIN) + "–" + str(TITLE_MAX) + " символов, уникальный для каждой страницы, с главным запросом в начале и названием "
         "компании после разделителя «|».",
-        "Description: 150–170 символов (до 200), уникальный, по сути страницы, с ключевыми запросами, "
+        "Description: " + str(DESC_MIN) + "–" + str(DESC_MAX) + " символов, уникальный, по сути страницы, с ключевыми запросами, "
         "заканчивается точкой.",
-        "Заполнить теги на всех страницах, убрать дубли и «неинформативные» шаблоны (например, «Компания»).",
+        "Заполнить теги на всех страницах, убрать дубли и «неинформативные» шаблоны (например, «Компания»). "
+        "Страницы с rel=canonical на главный URL (пагинация, фильтры) не считаются дублями.",
         "Составлять теги по семантическому ядру: на каждую страницу — свой кластер запросов "
         "(ТОП по частотности — в title, остальные — в description).",
         "Листы «Текущие метатеги» и «Скорректированные метатеги» в «Контент_<хост>.xlsx» — рабочие: "

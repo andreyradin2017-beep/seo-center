@@ -139,7 +139,7 @@ interface AuditJob {
   owner: string
   label: string
   points: { point: string; skill: string }[]
-  status: "queued" | "running"
+  status: "queued" | "running" | "done" | "failed"
   enqueuedAt: number
   startedAt?: number
   currentTaskId?: string
@@ -147,6 +147,10 @@ interface AuditJob {
   modelPrompt: string
   assemblyOnlyPrompt: string
   scheduled?: boolean
+  depthContent?: number
+  depthSpeed?: number
+  semcoreMsg?: string
+  semcorePath?: string
 }
 const auditJobs = new Map<string, AuditJob>()
 let auditRunning = 0
@@ -4362,7 +4366,8 @@ export async function createSeoPanel(opts: SeoPanelOpts): Promise<SeoPanelHandle
     const job = auditJobs.get(jobId)
     if (!job || job.status !== "running") return
     recordAuditRun(job)
-    job.status = "running" // помечаем и удаляем
+    // Помечаем завершённым перед удалением — для очереди и лога виден финальный статус.
+    job.status = "done"
     auditJobs.delete(jobId)
     scheduleQueueSave()
     auditRunning = Math.max(0, auditRunning - 1)
@@ -4537,7 +4542,7 @@ ${structureRules}`
   // Постановка аудита в очередь. Возвращает то же, что отдаёт /run-audit.
   function enqueueAudit(args: {
     site: string; points: { point: string; skill: string }[]; owner: string; auth?: AuthInfo | null
-    depthContent?: number; depthSpeed?: number; semcoreMsg?: string; scheduled?: boolean
+    depthContent?: number; depthSpeed?: number; semcoreMsg?: string; semcorePath?: string; scheduled?: boolean
   }): any {
     const site = String(args.site || "").trim()
     const points = (args.points || []).filter((p) => p && p.point && p.skill)
@@ -4552,16 +4557,17 @@ ${structureRules}`
         : "Аудит этого сайта уже стоит в очереди." }
     }
     const outDir = makeRunDir(host, args.auth ?? null, { category: "audit", task: "audit" })
+    const depthContent = args.depthContent ?? 50
+    const depthSpeed = args.depthSpeed ?? 10
+    const semcoreMsg = args.semcoreMsg ?? ""
     const { scriptPrompt, modelPrompt, assemblyOnlyPrompt } = buildAuditPrompts({
-      site, outDir, points,
-      depthContent: args.depthContent ?? 50,
-      depthSpeed: args.depthSpeed ?? 10,
-      semcoreMsg: args.semcoreMsg ?? "",
+      site, outDir, points, depthContent, depthSpeed, semcoreMsg,
     })
     const job: AuditJob = {
       id: newAuditJobId(), site, host, outDir, owner: args.owner,
       label: "SEO-аудит — " + site, points, status: "queued", enqueuedAt: Date.now(),
       scriptPrompt, modelPrompt, assemblyOnlyPrompt, scheduled: args.scheduled,
+      depthContent, depthSpeed, semcoreMsg, semcorePath: args.semcorePath,
     }
     auditJobs.set(job.id, job)
     scheduleQueueSave()
@@ -4596,6 +4602,8 @@ ${structureRules}`
         dir: job.outDir, points: job.points.map((p) => p.point),
         score: score ? score.score : null, gate: score ? score.gate : "unknown",
         counts: score ? score.counts : null, jobId: job.id, scheduled: job.scheduled,
+        depthContent: job.depthContent, depthSpeed: job.depthSpeed,
+        semcoreMsg: job.semcoreMsg, semcorePath: job.semcorePath,
       }
       const prev = readRuns(RESULTS_ROOT).runs.filter((r) => r.host === job.host).slice(-1)[0] || null
       const prevReport = prev ? readAuditReport(prev.dir) : null
@@ -4625,7 +4633,10 @@ ${structureRules}`
       try {
         const settings = readSettings(RESULTS_ROOT)
         for (const sch of dueSchedules(settings, Date.now())) {
-          const r = enqueueAudit({ site: sch.site, points: sch.points, owner: "admin", scheduled: true })
+          const last = lastRun(RESULTS_ROOT, sch.site)
+          const r = enqueueAudit({ site: sch.site, points: sch.points, owner: "admin", scheduled: true,
+            depthContent: sch.depthContent ?? (last?.depthContent ?? 50),
+            depthSpeed: sch.depthSpeed ?? (last?.depthSpeed ?? 10) })
           if (r.ok) {
             sch.lastRunAt = new Date().toISOString()
             saveSettings(RESULTS_ROOT, { schedules: settings.schedules })
@@ -5416,6 +5427,8 @@ ${structureRules}`
               everyDays: Math.max(1, Math.min(90, Number(body.everyDays) || 7)),
               hour: Math.max(0, Math.min(23, Number(body.hour) || 9)),
               enabled: true,
+              depthContent: Number(body.depthContent) || undefined,
+              depthSpeed: Number(body.depthSpeed) || undefined,
             })
             return Response.json({ ok: true, schedules: saveSettings(RESULTS_ROOT, { schedules }).schedules })
           }
@@ -5439,7 +5452,15 @@ ${structureRules}`
             if (!run) return Response.json({ ok: false, error: "Прогон не найден" })
             const points = pointRefs(run.points)
             if (!points.length) return Response.json({ ok: false, error: "В прогоне нет известных пунктов" })
-            return Response.json(enqueueAudit({ site: run.site, points, owner: "admin", auth: currentAuth }))
+            let semcoreMsg = run.semcoreMsg || ""
+            let semcorePath = run.semcorePath
+            if (semcorePath && !existsSync(semcorePath)) {
+              semcorePath = undefined
+              semcoreMsg = ""
+            }
+            return Response.json(enqueueAudit({ site: run.site, points, owner: "admin", auth: currentAuth,
+              depthContent: run.depthContent ?? 50, depthSpeed: run.depthSpeed ?? 10,
+              semcoreMsg, semcorePath }))
           }
 
           if (url.pathname === "/api/presets") {
@@ -6353,8 +6374,8 @@ ${outDir}
           const mine = [...auditJobs.values()].filter((j) => isAdmin || j.owner === currentAuth.uid)
           const queuedSorted = mine.filter((j) => j.status === "queued").sort((a, b) => a.enqueuedAt - b.enqueuedAt)
           const jobs = [
-            ...mine.filter((j) => j.status === "running").map((j) => ({ id: j.id, site: j.site, status: "running", eta: "выполняется" })),
-            ...queuedSorted.map((j, i) => ({ id: j.id, site: j.site, status: "queued", position: i + 1,
+            ...mine.filter((j) => j.status === "running").map((j) => ({ id: j.id, site: j.site, status: "running", stateLabel: "выполняется", eta: "выполняется" })),
+            ...queuedSorted.map((j, i) => ({ id: j.id, site: j.site, status: "queued", stateLabel: "в очереди", position: i + 1,
               eta: fmtEta(auditEtaMinutes(i + 1)) })),
           ]
           return Response.json({ ok: true, running: auditRunning, max: auditMaxConcurrent(), jobs })

@@ -171,6 +171,10 @@ export interface RunRecord {
   counts: AuditScore["counts"] | null
   jobId?: string
   scheduled?: boolean
+  depthContent?: number
+  depthSpeed?: number
+  semcoreMsg?: string
+  semcorePath?: string
 }
 export interface RunsStore { version: 1; runs: RunRecord[] }
 
@@ -197,6 +201,30 @@ export function appendRun(root: string, run: RunRecord): RunsStore {
 export function lastRun(root: string, host: string, exceptId?: string): RunRecord | null {
   const runs = readRuns(root).runs.filter((r) => r.host === host && r.id !== exceptId)
   return runs.length ? runs[runs.length - 1] : null
+}
+
+// Допустимые переходы статуса проблемы. Значение — разрешённые следующие статусы.
+export const ISSUE_STATUS_TRANSITIONS: Record<IssueRecord["status"], IssueRecord["status"][]> = {
+  open: ["in_progress", "fixed", "ignored"],
+  in_progress: ["open", "fixed", "ignored"],
+  fixed: ["open"],
+  ignored: ["open"],
+}
+
+export function setIssueStatus(store: IssuesStore, host: string, id: string, status: IssueRecord["status"], note?: string, now = new Date().toISOString()): boolean {
+  const rec = store.hosts[host]?.issues?.[id]
+  if (!rec) return false
+  if (rec.status === status) {
+    rec.note = note ?? rec.note
+    rec.lastSeen = now
+    return true
+  }
+  const allowed = ISSUE_STATUS_TRANSITIONS[rec.status]
+  if (!allowed || !allowed.includes(status)) return false
+  rec.status = status
+  rec.note = note ?? rec.note
+  rec.lastSeen = now
+  return true
 }
 
 // ---------- Проблемы: статусы и повторные появления ----------
@@ -261,15 +289,6 @@ export function applyReport(store: IssuesStore, host: string, report: AuditRepor
   return { added, reopened, vanished }
 }
 
-export function setIssueStatus(store: IssuesStore, host: string, id: string, status: IssueRecord["status"], note?: string, now = new Date().toISOString()): boolean {
-  const rec = store.hosts[host]?.issues?.[id]
-  if (!rec) return false
-  rec.status = status
-  rec.note = note ?? rec.note
-  rec.lastSeen = rec.lastSeen || now
-  return true
-}
-
 // ---------- Настройки: пресеты, расписание, телеграм, интеграции ----------
 export interface AuditPointRef { point: string; skill: string }
 export interface Schedule {
@@ -280,6 +299,8 @@ export interface Schedule {
   hour: number
   enabled: boolean
   lastRunAt?: string
+  depthContent?: number
+  depthSpeed?: number
 }
 export interface InsightsSettings {
   version: 1

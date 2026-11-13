@@ -96,6 +96,8 @@ export function renderInsightsPage(): string {
       <label>URL сайта<input id="sch-site" placeholder="https://example.com/"></label>
       <label>Каждые N дней<input id="sch-days" type="number" min="1" max="90" value="7"></label>
       <label>Час запуска<input id="sch-hour" type="number" min="0" max="23" value="9"></label>
+      <label>Глубина контента (2.1)<input id="sch-depth-content" type="number" min="1" value="50"></label>
+      <label>Глубина скорости (4.1)<input id="sch-depth-speed" type="number" min="1" value="10"></label>
       <label>Пункты<select id="sch-preset"><option value="">Как в последнем аудите</option></select></label>
       <button class="act" id="sch-add">Добавить</button>
     </div>
@@ -203,9 +205,21 @@ async function loadSettings(){
 
 function renderSchedules(list){
   if(!list.length){$('#schedules').innerHTML='<p class="muted">Расписаний нет.</p>';return}
-  let h='<table><tr><th>Сайт</th><th>Пункты</th><th>Раз в N дней</th><th>Час</th><th>Последний запуск</th><th>Вкл.</th><th></th></tr>';
+  function nextRunText(s){
+    if(!s.enabled)return "выкл.";
+    const now = new Date();
+    const base = s.lastRunAt ? new Date(s.lastRunAt) : new Date(now.getFullYear(), now.getMonth(), now.getDate(), s.hour, 0, 0);
+    const next = new Date(base.getTime() + Math.max(1, s.everyDays) * 86400000);
+    if(!s.lastRunAt){
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), s.hour, 0, 0);
+      if(now > today) next.setDate(today.getDate() + 1);
+      else next.setTime(today.getTime());
+    }
+    return next.toLocaleString(undefined, {day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});
+  }
+  let h='<table><tr><th>Сайт</th><th>Пункты</th><th>Раз в N дней</th><th>Час</th><th>Следующий запуск</th><th>Последний запуск</th><th>Вкл.</th><th></th></tr>';
   list.forEach(function(s){
-    h+='<tr><td>'+esc(s.site)+'</td><td>'+esc((s.points||[]).map(function(p){return p.point}).join(', ')||'—')+'</td><td>'+s.everyDays+'</td><td>'+s.hour+':00</td><td>'+fmtDate(s.lastRunAt)+'</td><td>'+(s.enabled?'да':'нет')+'</td><td><button class="ghost" data-toggle="'+esc(s.site)+'">'+(s.enabled?'Выключить':'Включить')+'</button> <button class="danger" data-del="'+esc(s.site)+'">Удалить</button></td></tr>';
+    h+='<tr><td>'+esc(s.site)+'</td><td>'+esc((s.points||[]).map(function(p){return p.point}).join(', ')||'—')+'</td><td>'+s.everyDays+'</td><td>'+s.hour+':00</td><td>'+nextRunText(s)+'</td><td>'+fmtDate(s.lastRunAt)+'</td><td>'+(s.enabled?'да':'нет')+'</td><td><button class="ghost" data-toggle="'+esc(s.site)+'">'+(s.enabled?'Выключить':'Включить')+'</button> <button class="danger" data-del="'+esc(s.site)+'">Удалить</button></td></tr>';
   });
   $('#schedules').innerHTML=h+'</table>';
   $$('#schedules [data-toggle]').forEach(function(b){b.onclick=async function(){const rr=await api('/api/insights/schedules/toggle',{site:b.dataset.toggle});if(rr.ok)renderSchedules(rr.schedules)}});
@@ -214,7 +228,8 @@ function renderSchedules(list){
 
 $('#sch-add').onclick=async function(){
   const preset=state.presets.find(function(p){return p.name===$('#sch-preset').value});
-  const body={site:$('#sch-site').value.trim(),everyDays:Number($('#sch-days').value)||7,hour:Number($('#sch-hour').value)||9,preset:preset?preset.name:''};
+  const body={site:$('#sch-site').value.trim(),everyDays:Number($('#sch-days').value)||7,hour:Number($('#sch-hour').value)||9,preset:preset?preset.name:'',
+    depthContent:Number($('#sch-depth-content').value)||50,depthSpeed:Number($('#sch-depth-speed').value)||10};
   const r=await api('/api/insights/schedules',body);
   $('#sch-msg').textContent=r.ok?'Добавлено.':'Ошибка: '+(r.error||'');
   if(r.ok)renderSchedules(r.schedules);

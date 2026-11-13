@@ -139,3 +139,19 @@ test("repeat queues the audit and issue status rejects an unknown id", async () 
   const settings = await json(await get("/api/insights/settings"))
   assert.equal(settings.body.settings.version, 1)
 })
+
+test("schedule stores depth parameters", async () => {
+  const created = await json(await post("/api/insights/schedules", { site: "https://example.com/", everyDays: 7, hour: 9, preset: "Быстрый", depthContent: 60, depthSpeed: 15 }))
+  assert.equal(created.body.ok, true)
+  assert.equal(created.body.schedules[0].depthContent, 60)
+  assert.equal(created.body.schedules[0].depthSpeed, 15)
+})
+
+test("repeat carries depth parameters from the run", async () => {
+  const run = { id: "r1", host: "example.org", site: "https://example.org/", at: "2026-11-01T10:00:00Z", dir: "d1", points: ["2.3"], score: 88, gate: "fail", counts: { high: 1, medium: 0, low: 0 }, depthContent: 77, depthSpeed: 13 }
+  writeFileSync(join(root, "results", ".runs.json"), JSON.stringify({ version: 1, runs: [run] }))
+  const repeat = await json(await post("/api/insights/repeat", { runId: "r1" }))
+  assert.equal(repeat.body.ok, true)
+  const queue = await json(await get("/api/audit-queue"))
+  assert.ok(queue.body.jobs.some((j) => j.site === "https://example.org/"))
+})

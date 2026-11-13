@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import {
-  applyReport, appendRun, diffReports, dueSchedules, formatRunMessage, issueKey, normalizeAuditReport,
+  applyReport, appendRun, diffReports, dueSchedules, formatRunMessage, issueKey, lastRun, normalizeAuditReport,
   normalizeSeverity, readIssues, readRuns, readSettings, saveSettings, scoreAudit, setIssueStatus,
 } from "../lib/audit-store.ts"
 
@@ -124,4 +124,43 @@ test("telegram message contains the gate, score and delta", () => {
   assert.match(message, /SEO-аудит: example\.com/)
   assert.match(message, /70\/100/)
   assert.match(message, /60 → 70/)
+})
+
+test("run record keeps audit parameters (depths, semcore)", () => {
+  const root = mkdtempSync(join(tmpdir(), "seo-runparams-"))
+  try {
+    appendRun(root, { id: "r1", host: "example.com", site: "https://example.com/", at: "2026-11-01T10:00:00Z", dir: "d1", points: ["2.3"], score: 80, gate: "warn", counts: { high: 0, medium: 2, low: 0 }, depthContent: 60, depthSpeed: 15, semcoreMsg: "ядро", semcorePath: "/u/semcore.xlsx" })
+    const runs = readRuns(root).runs
+    assert.equal(runs[0].depthContent, 60)
+    assert.equal(runs[0].depthSpeed, 15)
+    assert.equal(runs[0].semcoreMsg, "ядро")
+    assert.equal(runs[0].semcorePath, "/u/semcore.xlsx")
+    const last = lastRun(root, "example.com")
+    assert.equal(last.depthContent, 60)
+    assert.equal(last.depthSpeed, 15)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("issue status transitions are validated", () => {
+  const root = mkdtempSync(join(tmpdir(), "seo-transitions-"))
+  try {
+    const store = readIssues(root)
+    const report = normalizeAuditReport(rawReport)
+    applyReport(store, "example.com", report, "run1", "2026-11-01T10:00:00Z")
+    const id = issueKey("2.3", "Пустые title")
+    assert.equal(setIssueStatus(store, "example.com", id, "in_progress"), true)
+    assert.equal(setIssueStatus(store, "example.com", id, "fixed"), true)
+    // fixed ->ignored недопустим
+    assert.equal(setIssueStatus(store, "example.com", id, "ignored"), false)
+    assert.equal(store.hosts["example.com"].issues[id].status, "fixed")
+    // fixed -> open допустим (регресс)
+    assert.equal(setIssueStatus(store, "example.com", id, "open"), true)
+    assert.equal(store.hosts["example.com"].issues[id].status, "open")
+    // несуществующая проблема
+    assert.equal(setIssueStatus(store, "example.com", "nope", "open"), false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

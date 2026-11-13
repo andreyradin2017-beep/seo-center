@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "meta": {
+    "title_min": 50,
+    "title_max": 100,
+    "desc_min": 170,
+    "desc_max": 250
+  },
+  "canonical": {
+    "ignore_query_params": ["PAGEN_1", "PAGEN_2", "PAGEN", "page", "PAGEN_3", "PAGEN_4"],
+    "strip_trailing_slash": true,
+    "duplicate_requires_no_self_canonical": true
+  },
+  "robots": {
+    "required_directive": "Disallow: /*?"
+  },
+  "jsonld": {
+    "allowed_jsonld_types": ["Article", "NewsArticle", "BlogPosting", "Movie", "Review", "Recipe", "QAPage"],
+    "required_content_fields": ["@id", "headline", "text"]
+  }
+}
