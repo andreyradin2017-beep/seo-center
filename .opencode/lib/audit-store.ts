@@ -418,3 +418,63 @@ export function formatRunMessage(host: string, run: RunRecord, delta: ReportDelt
   }
   return lines.filter(Boolean).join("\n")
 }
+
+// ---------- Трекинг позиций (M3 из seo-factory-starter) ----------
+export interface PositionRecord {
+  id: string
+  host: string
+  site: string
+  date: string
+  query: string
+  page: string
+  position: number
+  clicks: number
+  impressions: number
+  ctr: number
+  source: "gsc" | "webmaster"
+}
+export interface PositionsStore { version: 1; positions: PositionRecord[] }
+
+function positionsPath(root: string): string {
+  return join(root, ".positions.json")
+}
+export function readPositions(root: string): PositionsStore {
+  try {
+    const file = positionsPath(root)
+    if (!existsSync(file)) return { version: 1, positions: [] }
+    const raw = JSON.parse(readFileSync(file, "utf8"))
+    return { version: 1, positions: Array.isArray(raw?.positions) ? raw.positions.filter((p: any) => p && p.host && p.date && p.query) : [] }
+  } catch {
+    return { version: 1, positions: [] }
+  }
+}
+export function appendPositions(root: string, positions: PositionRecord[]): PositionsStore {
+  const store = readPositions(root)
+  store.positions.push(...positions)
+  if (store.positions.length > 5000) store.positions = store.positions.slice(-5000)
+  writeJsonAtomic(positionsPath(root), store)
+  return store
+}
+export function lastPositions(root: string, host: string, date?: string): PositionRecord[] {
+  const all = readPositions(root).positions.filter((p) => p.host === host)
+  if (date) return all.filter((p) => p.date === date)
+  return all
+}
+export function positionsDelta(root: string, host: string, dateFrom: string, dateTo: string): { query: string; page: string; positionFrom: number | null; positionTo: number | null; change: number | null }[] {
+  const from = lastPositions(root, host, dateFrom)
+  const to = lastPositions(root, host, dateTo)
+  const toMap = new Map<string, PositionRecord>()
+  for (const p of to) toMap.set(`${p.query}|${p.page}`, p)
+  const result: { query: string; page: string; positionFrom: number | null; positionTo: number | null; change: number | null }[] = []
+  for (const p of from) {
+    const cur = toMap.get(`${p.query}|${p.page}`)
+    result.push({
+      query: p.query,
+      page: p.page,
+      positionFrom: p.position,
+      positionTo: cur ? cur.position : null,
+      change: cur ? cur.position - p.position : null,
+    })
+  }
+  return result
+}

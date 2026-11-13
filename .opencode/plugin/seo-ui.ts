@@ -9,8 +9,8 @@ import { constantTimeEqual, createAuthToken, credentialVersion, hasGlobalAccess,
 import { writeJsonAtomic } from "../lib/json-store.ts"
 import type { AuthInfo, AuthRole } from "../lib/security.ts"
 import {
-  applyReport, appendRun, diffReports, dueSchedules, formatRunMessage, normalizeAuditReport, readIssues,
-  readRuns, readSettings, saveSettings, scoreAudit, setIssueStatus, telegramNotify, writeIssues,
+  applyReport, appendRun, appendPositions, diffReports, dueSchedules, formatRunMessage, lastPositions, normalizeAuditReport, positionsDelta, readIssues,
+  readPositions, readRuns, readSettings, saveSettings, scoreAudit, setIssueStatus, telegramNotify, writeIssues,
 } from "../lib/audit-store.ts"
 import type { AuditReport, RunRecord } from "../lib/audit-store.ts"
 import { buildJsonLd, buildRobots, buildSitemap, jsonLdTemplate, urlsFromCsv } from "../lib/generators.ts"
@@ -5414,6 +5414,30 @@ ${structureRules}`
               return Response.json({ ok: result.ok, result })
             }
             return Response.json({ ok: false, error: "Неизвестная интеграция" })
+          }
+
+          if (req.method === "GET" && url.pathname === "/api/insights/positions") {
+            const host = String(url.searchParams.get("host") || "")
+            const date = String(url.searchParams.get("date") || "")
+            const positions = host ? lastPositions(RESULTS_ROOT, host, date || undefined) : readPositions(RESULTS_ROOT).positions
+            return Response.json({ ok: true, positions: host ? positions : positions.slice(0, 100) })
+          }
+
+          if (req.method === "POST" && url.pathname === "/api/insights/positions") {
+            const body = await readBody(req)
+            const positions = Array.isArray(body.positions) ? body.positions : []
+            if (!positions.length) return Response.json({ ok: false, error: "Нет позиций для сохранения" })
+            const store = appendPositions(RESULTS_ROOT, positions)
+            return Response.json({ ok: true, count: store.positions.length })
+          }
+
+          if (req.method === "GET" && url.pathname === "/api/insights/positions/delta") {
+            const host = String(url.searchParams.get("host") || "")
+            const dateFrom = String(url.searchParams.get("dateFrom") || "")
+            const dateTo = String(url.searchParams.get("dateTo") || "")
+            if (!host || !dateFrom || !dateTo) return Response.json({ ok: false, error: "Укажите host, dateFrom, dateTo" })
+            const delta = positionsDelta(RESULTS_ROOT, host, dateFrom, dateTo)
+            return Response.json({ ok: true, delta })
           }
 
           if (req.method === "POST" && url.pathname === "/api/insights/schedules") {

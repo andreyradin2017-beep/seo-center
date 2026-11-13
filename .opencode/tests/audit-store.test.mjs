@@ -4,8 +4,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import {
-  applyReport, appendRun, diffReports, dueSchedules, formatRunMessage, issueKey, lastRun, normalizeAuditReport,
-  normalizeSeverity, readIssues, readRuns, readSettings, saveSettings, scoreAudit, setIssueStatus,
+  applyReport, appendRun, appendPositions, diffReports, dueSchedules, formatRunMessage, issueKey, lastPositions, lastRun, normalizeAuditReport,
+  normalizeSeverity, positionsDelta, readIssues, readPositions, readRuns, readSettings, saveSettings, scoreAudit, setIssueStatus,
 } from "../lib/audit-store.ts"
 
 const rawReport = {
@@ -160,6 +160,43 @@ test("issue status transitions are validated", () => {
     assert.equal(store.hosts["example.com"].issues[id].status, "open")
     // несуществующая проблема
     assert.equal(setIssueStatus(store, "example.com", "nope", "open"), false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("positions append, read and lastPositions filter by host and date", () => {
+  const root = mkdtempSync(join(tmpdir(), "seo-positions-"))
+  try {
+    appendPositions(root, [
+      { id: "p1", host: "example.com", site: "https://example.com/", date: "2026-11-01", query: "купить котел", page: "https://example.com/catalog/", position: 5, clicks: 10, impressions: 100, ctr: 0.1, source: "gsc" },
+      { id: "p2", host: "example.com", site: "https://example.com/", date: "2026-11-01", query: "котел цена", page: "https://example.com/catalog/", position: 12, clicks: 3, impressions: 50, ctr: 0.06, source: "gsc" },
+      { id: "p3", host: "other.com", site: "https://other.com/", date: "2026-11-01", query: "тест", page: "https://other.com/", position: 1, clicks: 0, impressions: 0, ctr: 0, source: "gsc" },
+    ])
+    const all = readPositions(root)
+    assert.equal(all.positions.length, 3)
+    const example = lastPositions(root, "example.com", "2026-11-01")
+    assert.equal(example.length, 2)
+    assert.equal(example[0].query, "купить котел")
+    assert.equal(example[0].position, 5)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("positions delta shows position change between dates", () => {
+  const root = mkdtempSync(join(tmpdir(), "seo-positions-delta-"))
+  try {
+    appendPositions(root, [
+      { id: "p1", host: "example.com", site: "https://example.com/", date: "2026-11-01", query: "купить котел", page: "https://example.com/catalog/", position: 5, clicks: 10, impressions: 100, ctr: 0.1, source: "gsc" },
+      { id: "p2", host: "example.com", site: "https://example.com/", date: "2026-11-08", query: "купить котел", page: "https://example.com/catalog/", position: 3, clicks: 15, impressions: 120, ctr: 0.125, source: "gsc" },
+    ])
+    const delta = positionsDelta(root, "example.com", "2026-11-01", "2026-11-08")
+    assert.equal(delta.length, 1)
+    assert.equal(delta[0].query, "купить котел")
+    assert.equal(delta[0].positionFrom, 5)
+    assert.equal(delta[0].positionTo, 3)
+    assert.equal(delta[0].change, -2)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
