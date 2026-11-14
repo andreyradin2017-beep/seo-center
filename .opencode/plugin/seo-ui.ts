@@ -15,7 +15,7 @@ import {
 import type { AuditReport, RunRecord } from "../lib/audit-store.ts"
 import { buildJsonLd, buildRobots, buildSitemap, jsonLdTemplate, urlsFromCsv } from "../lib/generators.ts"
 import { renderGeneratorsPage, renderInsightsPage } from "../lib/pages.ts"
-import { gscSites, metrikaSummary, psiCheck, webmasterHosts, wordstatFrequency } from "../lib/integrations.ts"
+import { gscSites, metrikaSummary, metrikaTrafficSources, metrikaGoals, metrikaComparePeriods, psiCheck, webmasterHosts, wordstatFrequency } from "../lib/integrations.ts"
 
 const SKILL_EXTRACT = "seo-metatags-extract"
 const SKILL_METATAGS = "seo-metatags"
@@ -5412,6 +5412,22 @@ ${structureRules}`
             if (kind === "wordstat") {
               const result = await wordstatFrequency({ apiKey: ints.wordstatKey, folderId: ints.wordstatFolderId, phrases: [String(body.phrase || "купить котёл")] })
               return Response.json({ ok: result.ok, result })
+            }
+            if (kind === "metrika-sources") {
+              const result = await metrikaTrafficSources({ token: ints.metrikaToken, counterId: ints.metrikaCounter, startDate: iso(Date.now() - 30 * day), endDate: iso(Date.now()) })
+              return Response.json({ ok: true, result })
+            }
+            if (kind === "metrika-goals") {
+              const result = await metrikaGoals({ token: ints.metrikaToken, counterId: ints.metrikaCounter, startDate: iso(Date.now() - 30 * day), endDate: iso(Date.now()) })
+              return Response.json({ ok: true, result })
+            }
+            if (kind === "metrika-compare") {
+              const result = await metrikaComparePeriods({
+                token: ints.metrikaToken, counterId: ints.metrikaCounter,
+                date1From: iso(Date.now() - 60 * day), date1To: iso(Date.now() - 30 * day),
+                date2From: iso(Date.now() - 30 * day), date2To: iso(Date.now()),
+              })
+              return Response.json({ ok: true, result })
             }
             return Response.json({ ok: false, error: "Неизвестная интеграция" })
           }

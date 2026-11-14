@@ -259,6 +259,163 @@ export async function metrikaSummary(input: { token: string; counterId: string; 
   }
 }
 
+export async function metrikaTrafficSources(input: {
+  token: string
+  counterId: string
+  startDate: string
+  endDate: string
+  fetchImpl?: FetchLike
+}): Promise<IntegrationResult> {
+  const summary = `Яндекс.Метрика ${input.counterId}: источники трафика ${input.startDate}..${input.endDate}`
+  const invalidDate = dateError(input.startDate) ?? dateError(input.endDate)
+  if (invalidDate) return fail("metrika", summary, invalidDate)
+
+  const params = new URLSearchParams({
+    ids: input.counterId,
+    metrics: "ym:s:visits,ym:s:users,ym:s:pageviews",
+    dimensions: "ym:s:sources",
+    date1: input.startDate,
+    date2: input.endDate,
+    accuracy: "full",
+    sort: "-ym:s:visits",
+    limit: "50",
+  })
+  const response = await apiJson(input.fetchImpl, "metrika", summary, `${METRIKA_URL}?${params.toString()}`, {
+    headers: auth("OAuth", input.token),
+  })
+  if (!response.ok) return response
+
+  const json = response.json
+  const rows = Array.isArray(json?.data) ? json.data : []
+  const sources = rows.map((row: any) => {
+    const dims = Array.isArray(row.dimensions) ? row.dimensions : []
+    const mets = Array.isArray(row.metrics) ? row.metrics : []
+    return {
+      source: String(dims[0]?.name ?? dims[0] ?? "неизвестно"),
+      visits: num(mets[0]) ?? 0,
+      users: num(mets[1]) ?? 0,
+      pageviews: num(mets[2]) ?? 0,
+    }
+  })
+  return {
+    ok: true,
+    kind: "metrika",
+    summary: `Яндекс.Метрика ${input.counterId}: источники трафика, ${sources.length} каналов`,
+    data: { counterId: input.counterId, startDate: input.startDate, endDate: input.endDate, sources },
+  }
+}
+
+export async function metrikaGoals(input: {
+  token: string
+  counterId: string
+  startDate: string
+  endDate: string
+  fetchImpl?: FetchLike
+}): Promise<IntegrationResult> {
+  const summary = `Яндекс.Метрика ${input.counterId}: цели и конверсии ${input.startDate}..${input.endDate}`
+  const invalidDate = dateError(input.startDate) ?? dateError(input.endDate)
+  if (invalidDate) return fail("metrika", summary, invalidDate)
+
+  const params = new URLSearchParams({
+    ids: input.counterId,
+    metrics: "ym:s:goalVisits,ym:s:goalConversionRate",
+    dimensions: "ym:s:goalID",
+    date1: input.startDate,
+    date2: input.endDate,
+    accuracy: "full",
+    sort: "-ym:s:goalVisits",
+    limit: "50",
+  })
+  const response = await apiJson(input.fetchImpl, "metrika", summary, `${METRIKA_URL}?${params.toString()}`, {
+    headers: auth("OAuth", input.token),
+  })
+  if (!response.ok) return response
+
+  const json = response.json
+  const rows = Array.isArray(json?.data) ? json.data : []
+  const goals = rows.map((row: any) => {
+    const dims = Array.isArray(row.dimensions) ? row.dimensions : []
+    const mets = Array.isArray(row.metrics) ? row.metrics : []
+    return {
+      goalId: String(dims[0]?.id ?? dims[0] ?? "неизвестно"),
+      goalName: String(dims[0]?.name ?? dims[0] ?? "неизвестно"),
+      visits: num(mets[0]) ?? 0,
+      conversionRate: round(num(mets[1]) ?? 0, 2),
+    }
+  })
+  return {
+    ok: true,
+    kind: "metrika",
+    summary: `Яндекс.Метрика ${input.counterId}: цели, ${goals.length} целей`,
+    data: { counterId: input.counterId, startDate: input.startDate, endDate: input.endDate, goals },
+  }
+}
+
+export async function metrikaComparePeriods(input: {
+  token: string
+  counterId: string
+  date1From: string
+  date1To: string
+  date2From: string
+  date2To: string
+  fetchImpl?: FetchLike
+}): Promise<IntegrationResult> {
+  const summary = `Яндекс.Метрика ${input.counterId}: сравнение периодов`
+  const invalidDate =
+    dateError(input.date1From) ?? dateError(input.date1To) ?? dateError(input.date2From) ?? dateError(input.date2To)
+  if (invalidDate) return fail("metrika", summary, invalidDate)
+
+  const fetchPeriod = async (date1: string, date2: string) => {
+    const params = new URLSearchParams({
+      ids: input.counterId,
+      metrics: "ym:s:visits,ym:s:users,ym:s:pageviews,ym:s:bounceRate",
+      date1, date2,
+      accuracy: "full",
+    })
+    const response = await apiJson(input.fetchImpl, "metrika", summary, `${METRIKA_URL}?${params.toString()}`, {
+      headers: auth("OAuth", input.token),
+    })
+    if (!response.ok) return response
+    const json = response.json
+    const totals = Array.isArray(json?.totals?.[0]) ? json.totals[0] : []
+    return {
+      visits: num(totals[0]) ?? 0,
+      users: num(totals[1]) ?? 0,
+      pageviews: num(totals[2]) ?? 0,
+      bounceRate: round(num(totals[3]) ?? 0, 2),
+    }
+  }
+
+  const p1 = await fetchPeriod(input.date1From, input.date1To)
+  const p2 = await fetchPeriod(input.date2From, input.date2To)
+
+  const changeVisits = p2.visits - p1.visits
+  const changeVisitsPct = p1.visits > 0 ? round((changeVisits / p1.visits) * 100, 1) : null
+  const changeUsers = p2.users - p1.users
+  const changeUsersPct = p1.users > 0 ? round((changeUsers / p1.users) * 100, 1) : null
+  const changePageviews = p2.pageviews - p1.pageviews
+  const changePageviewsPct = p1.pageviews > 0 ? round((changePageviews / p1.pageviews) * 100, 1) : null
+
+  return {
+    ok: true,
+    kind: "metrika",
+    summary: `Яндекс.Метрика ${input.counterId}: сравнение периодов`,
+    data: {
+      counterId: input.counterId,
+      period1: { ...p1, from: input.date1From, to: input.date1To },
+      period2: { ...p2, from: input.date2From, to: input.date2To },
+      change: {
+        visits: changeVisits,
+        visitsPct: changeVisitsPct,
+        users: changeUsers,
+        usersPct: changeUsersPct,
+        pageviews: changePageviews,
+        pageviewsPct: changePageviewsPct,
+      },
+    },
+  }
+}
+
 const WORDSTAT_URL = "https://search-api.cloud.yandex.net/v2/wordstat/phrases"
 
 export async function wordstatFrequency(input: {

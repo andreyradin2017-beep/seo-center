@@ -141,6 +141,9 @@ export function renderInsightsPage(): string {
       <div><h2>Google Search Console</h2><label class="muted">OAuth-токен<input id="int-gsc" placeholder="ya29…"></label><div class="row" style="margin-top:8px"><button class="ghost" data-test="gsc">Проверить</button></div></div>
       <div><h2>Яндекс.Метрика</h2><label class="muted">OAuth-токен<input id="int-metrika" placeholder="y0_Ag…"></label><label class="muted">Номер счётчика<input id="int-counter" placeholder="12345678"></label><div class="row" style="margin-top:8px"><button class="ghost" data-test="metrika">Проверить</button></div></div>
       <div><h2>Яндекс.Вордстат</h2><label class="muted">API-ключ<input id="int-wordstat-key" placeholder="AQVN…"></label><label class="muted">Folder ID<input id="int-wordstat-folder" placeholder="b1g…"></label><div class="row" style="margin-top:8px"><button class="ghost" data-test="wordstat">Проверить</button></div></div>
+      <div><h2>Яндекс.Метрика: источники трафика</h2><label class="muted">ОAuth-токен<input id="int-metrika-src-token" placeholder="y0_Ag…"></label><label class="muted">Счётчик<input id="int-metrika-src-counter" placeholder="12345678"></label><div class="row" style="margin-top:8px"><button class="ghost" data-test="metrika-sources">Проверить</button></div></div>
+      <div><h2>Яндекс.Метрика: цели</h2><label class="muted">ОAuth-токен<input id="int-metrika-goals-token" placeholder="y0_Ag…"></label><label class="muted">Счётчик<input id="int-metrika-goals-counter" placeholder="12345678"></label><div class="row" style="margin-top:8px"><button class="ghost" data-test="metrika-goals">Проверить</button></div></div>
+      <div><h2>Яндекс.Метрика: сравнение периодов</h2><label class="muted">ОAuth-токен<input id="int-metrika-cmp-token" placeholder="y0_Ag…"></label><label class="muted">Счётчик<input id="int-metrika-cmp-counter" placeholder="12345678"></label><div class="row" style="margin-top:8px"><button class="ghost" data-test="metrika-compare">Проверить</button></div></div>
     </div>
     <div class="row" style="margin-top:12px"><button class="act" id="int-save">Сохранить токены</button><button class="ghost" id="preset-save">Сохранить пресет пунктов…</button></div>
     <div id="int-result" style="margin-top:12px"></div>
@@ -291,7 +294,13 @@ $('#int-save').onclick=async function(){const r=await api('/api/insights/integra
 $('#preset-save').onclick=function(){alert('Пресеты пунктов сохраняются на вкладке «SEO-аудит» кнопкой «Сохранить пресет».')};
 $$('[data-test]').forEach(function(b){b.onclick=async function(){
   b.disabled=true;$('#int-result').innerHTML='<p class="muted">Проверяю…</p>';
-  const r=await api('/api/insights/integrations/test',{kind:b.dataset.test,url:$('#int-psi-url').value.trim()});
+  const kind=b.dataset.test;
+  let body={kind};
+  if(kind==='psi'){body.url=$('#int-psi-url').value.trim()}
+  if(kind==='metrika-sources'){body.token=$('#int-metrika-src-token').value.trim();body.counterId=$('#int-metrika-src-counter').value.trim()}
+  if(kind==='metrika-goals'){body.token=$('#int-metrika-goals-token').value.trim();body.counterId=$('#int-metrika-goals-counter').value.trim()}
+  if(kind==='metrika-compare'){body.token=$('#int-metrika-cmp-token').value.trim();body.counterId=$('#int-metrika-cmp-counter').value.trim()}
+  const r=await api('/api/insights/integrations/test',body);
   b.disabled=false;
   $('#int-result').innerHTML=(r.ok&&r.result&&r.result.ok)?('<p class="ok">'+esc(r.result.summary)+'</p><pre>'+esc(JSON.stringify(r.result.data,null,2))+'</pre>'):('<p class="err">'+esc(r.result?(r.result.error||r.result.summary):r.error||'Ошибка')+'</p>');
 }}) ;
