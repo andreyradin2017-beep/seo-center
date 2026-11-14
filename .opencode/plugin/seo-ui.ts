@@ -151,6 +151,7 @@ interface AuditJob {
   depthSpeed?: number
   semcoreMsg?: string
   semcorePath?: string
+  dryRun?: boolean
 }
 const auditJobs = new Map<string, AuditJob>()
 let auditRunning = 0
@@ -1950,6 +1951,13 @@ function buildUiHtml(port: number, lanIp: string | null, auth?: AuthInfo | null)
       </div>
       <div class="file-hint" style="margin-top:-10px">По умолчанию 10 страниц: главная, «О компании», каталоги/разделы, разводящие страницы, контакты, карточки и другие важные страницы. Ползунок 1–1000; 1000+ — все страницы.</div>
 
+      <div class="audit-toolbar" style="margin-top:12px;padding:12px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="audit-dry-run" style="width:auto;margin:0">
+          <span>Только проверить (без записи в историю, без уведомлений)</span>
+        </label>
+      </div>
+
       <label class="field" for="audit-core">Семантическое ядро <small style="color:var(--muted)">(необязательно; используется в пункте 2.3 «Служебные теги»)</small></label>
       <div class="dropzone" id="dropzone-audit-core" style="margin-bottom:16px;">
         <input type="file" id="audit-core" accept=".xlsx,.xls,.csv">
@@ -2969,6 +2977,7 @@ document.getElementById('run-topics').addEventListener('click', async () => {
     const speedAll = depthSpeed >= 1000;
     const depthContentToSend = contentAll ? 1000000 : depthContent;
     const depthSpeedToSend = speedAll ? 1000000 : depthSpeed;
+    const dryRun = document.getElementById('audit-dry-run')?.checked === true;
     if(!url){ setStatus('status-audit','err','<b>Ошибка</b> Укажи URL сайта.'); return; }
     if(!points.length){ setStatus('status-audit','err','<b>Ошибка</b> Выбери хотя бы один пункт аудита.'); return; }
     if((contentAll || speedAll) && !confirm('Выбрано «все страницы» для ' + (contentAll && speedAll ? 'пунктов 2.1 и 4.1' : (contentAll ? 'пункта 2.1 «Текстовый контент»' : 'пункта 4.1 «Скорость загрузки»')) + ' — будут проверены ВСЕ страницы сайта. Это может занять очень много времени. Продолжить?')){ return; }
@@ -2982,21 +2991,22 @@ document.getElementById('run-topics').addEventListener('click', async () => {
         fd.append('points', JSON.stringify(points));
         fd.append('depthContent', String(depthContentToSend));
         fd.append('depthSpeed', String(depthSpeedToSend));
+        fd.append('dryRun', String(dryRun));
         fd.append('semcore', coreFile);
         const res = await fetch('/run-audit', { method:'POST', body: fd });
         const j = await res.json().catch(()=>({ok:false, error:'Не удалось прочитать ответ'}));
         if(!res.ok || !j.ok) throw new Error(j.error || ('HTTP ' + res.status));
         data = j;
       }else{
-        data = await post('/run-audit', { url, points, depthContent: depthContentToSend, depthSpeed: depthSpeedToSend });
+        data = await post('/run-audit', { url, points, depthContent: depthContentToSend, depthSpeed: depthSpeedToSend, dryRun });
       }
       if(data.host){ selectProject(data.host); }
       if(data.queued){
         setStatus('status-audit','wait','<b>Аудит поставлен в очередь</b> — ваша позиция: ' + data.position +
           ', примерное ожидание: ' + data.eta + '. Сейчас выполняется аудитов: ' + data.running + ' из ' + data.max +
-          '. Убрать задание можно в списке очереди ниже.');
+          '. Убрать задание можно в списке очереди ниже.' + (data.dryRun ? ' (режим только проверки)' : ''));
       }else{
-        bindTask('status-audit', data.taskId, 'SEO-аудит — ' + url, data.host, 'a-results');
+        bindTask('status-audit', data.taskId, 'SEO-аудит — ' + url + (dryRun ? ' (только проверка)' : ''), data.host, 'a-results');
       }
       refreshAuditQueue();
     }catch(e){
@@ -4543,8 +4553,9 @@ ${structureRules}`
   function enqueueAudit(args: {
     site: string; points: { point: string; skill: string }[]; owner: string; auth?: AuthInfo | null
     depthContent?: number; depthSpeed?: number; semcoreMsg?: string; semcorePath?: string; scheduled?: boolean
+    dryRun?: boolean
   }): any {
-    const site = String(args.site || "").trim()
+    console.log("DEBUG enqueueAudit called, args keys: " + Object.keys(args) + ", has dryRun: " + ("dryRun" in args) + ", args.dryRun: " + args.dryRun + ", args[\"dryRun\"]: " + args["dryRun"])
     const points = (args.points || []).filter((p) => p && p.point && p.skill)
     if (!site) return { ok: false, error: "URL сайта не указан" }
     if (!points.length) return { ok: false, error: "Не выбран ни один пункт аудита" }
@@ -4568,20 +4579,24 @@ ${structureRules}`
       label: "SEO-аудит — " + site, points, status: "queued", enqueuedAt: Date.now(),
       scriptPrompt, modelPrompt, assemblyOnlyPrompt, scheduled: args.scheduled,
       depthContent, depthSpeed, semcoreMsg, semcorePath: args.semcorePath,
+      dryRun: args["dryRun"],
     }
     auditJobs.set(job.id, job)
     scheduleQueueSave()
-    pushHistory({ at: nowIso(), user: job.owner, tool: "audit", site: host, status: "queued", jobId: job.id })
+    if (!args.dryRun) {
+      pushHistory({ at: nowIso(), user: job.owner, tool: "audit", site: host, status: "queued", jobId: job.id })
+    }
     if (auditRunning < auditMaxConcurrent()) {
       launchAuditJob(job)
-      return { ok: true, host, outDir, jobId: job.id, taskId: job.currentTaskId,
-        queued: false, running: auditRunning, max: auditMaxConcurrent() }
+      const result = { ok: true, host, outDir, jobId: job.id, taskId: job.currentTaskId,
+        queued: false, running: auditRunning, max: auditMaxConcurrent(), dryRun: args.dryRun === true }
+      return result
     }
     const queued = [...auditJobs.values()].filter((j) => j.status === "queued").sort((a, b) => a.enqueuedAt - b.enqueuedAt)
     const position = queued.findIndex((j) => j.id === job.id) + 1
-    return { ok: true, host, outDir, jobId: job.id, queued: true, position,
-      eta: fmtEta(auditEtaMinutes(position)), running: auditRunning, max: auditMaxConcurrent() }
-  }
+    const result2 = { ok: true, host, outDir, jobId: job.id, queued: true, position,
+      eta: fmtEta(auditEtaMinutes(position)), running: auditRunning, max: auditMaxConcurrent(), dryRun: args.dryRun === true }
+    return result2
 
   // ---------- Результат прогона: audit.json → история, проблемы, Telegram ----------
   function readAuditReport(dir: string): AuditReport | null {
@@ -4608,15 +4623,17 @@ ${structureRules}`
       }
       const prev = readRuns(RESULTS_ROOT).runs.filter((r) => r.host === job.host).slice(-1)[0] || null
       const prevReport = prev ? readAuditReport(prev.dir) : null
-      appendRun(RESULTS_ROOT, run)
-      if (report) {
-        const store = readIssues(RESULTS_ROOT)
-        applyReport(store, job.host, report, job.id)
-        writeIssues(RESULTS_ROOT, store)
+      if (!job.dryRun) {
+        appendRun(RESULTS_ROOT, run)
+        if (report) {
+          const store = readIssues(RESULTS_ROOT)
+          applyReport(store, job.host, report, job.id)
+          writeIssues(RESULTS_ROOT, store)
+        }
+        const delta = report ? diffReports(prevReport, report) : null
+        const settings = readSettings(RESULTS_ROOT)
+        void telegramNotify(settings, formatRunMessage(job.host, run, delta)).catch(() => {})
       }
-      const delta = report ? diffReports(prevReport, report) : null
-      const settings = readSettings(RESULTS_ROOT)
-      void telegramNotify(settings, formatRunMessage(job.host, run, delta)).catch(() => {})
     } catch (e) {
       log("recordAuditRun failed: " + String(e))
     }
@@ -6374,8 +6391,10 @@ ${outDir}
           // 4.1 «Скорость загрузки» (по умолчанию 10 — только ключевые страницы).
           let depthContent = 50
           let depthSpeed = 10
+          let form: any = null
+          let body: any = null
           if (ctype.includes("multipart/form-data")) {
-            const form = await req.formData()
+            form = await req.formData()
             site = String(form.get("url") || "").trim()
             try { rawPoints = JSON.parse(String(form.get("points") || "[]")) } catch { rawPoints = [] }
             const dc = parseInt(String(form.get("depthContent") || form.get("depth") || ""), 10)
@@ -6391,7 +6410,7 @@ ${outDir}
               semcoreMsg = `\nСемантическое ядро (для пункта 2.3 «Служебные теги»): ${savedPath}\nЕсли среди выбранных пунктов есть 2.3, составь скорректированные title/description по этому семантическому ядру (на каждую страницу — свой кластер запросов).\n`
             }
           } else {
-            const body = await readBody(req)
+            body = await readBody(req)
             site = String(body.url || "").trim()
             rawPoints = Array.isArray(body.points) ? body.points : []
             const dc = parseInt(String(body.depthContent || body.depth || ""), 10)
@@ -6399,8 +6418,12 @@ ${outDir}
             const ds = parseInt(String(body.depthSpeed || ""), 10)
             if (!isNaN(ds) && ds > 0) depthSpeed = ds
           }
+          const dryRun = ctype.includes("multipart/form-data")
+            ? String(form.get("dryRun") || "").toLowerCase() === "true" || String(form.get("dryRun") || "").toLowerCase() === "on"
+            : String((body as any)?.dryRun || "").toLowerCase() === "true"
           if (!site) return Response.json({ ok: false, error: "URL сайта не указан" })
           return Response.json(enqueueAudit({
+            dryRun,
             site,
             points: rawPoints
               .map((p) => ({ point: String((p && p.point) || "").trim(), skill: String((p && p.skill) || "").trim() }))
