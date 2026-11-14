@@ -259,6 +259,7 @@ man = {
     "worktree": os.environ.get("M_WORKTREE", ""),
     "contents": ["project", "home/.config/opencode", "home/.local/share/opencode",
                  "home/.omniroute", "home/.config/systemd/user"],
+    "analytics_state": [".runs.json", ".issues.json", ".insights.json", ".queue.json"],
 }
 if man["git"]:
     man["contents"].append("git (ветки main/dev + .git)")
