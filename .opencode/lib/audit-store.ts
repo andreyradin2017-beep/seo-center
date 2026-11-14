@@ -31,6 +31,7 @@ export interface AuditReport {
   generatedAt: string
   points: AuditPoint[]
   summary: string
+  sitemapCoverage?: any
 }
 export interface AuditScore {
   score: number
@@ -117,6 +118,7 @@ export function normalizeAuditReport(raw: any, fallbackHost = "project", now = n
     generatedAt: /^\d{4}-\d{2}-\d{2}/.test(String(raw.generatedAt ?? "")) ? String(raw.generatedAt) : now,
     points,
     summary: text(raw.summary ?? raw.conclusion, 2000),
+    sitemapCoverage: raw.sitemapCoverage ?? null,
   }
 }
 
@@ -175,6 +177,7 @@ export interface RunRecord {
   depthSpeed?: number
   semcoreMsg?: string
   semcorePath?: string
+  sitemapCoverage?: any
 }
 export interface RunsStore { version: 1; runs: RunRecord[] }
 

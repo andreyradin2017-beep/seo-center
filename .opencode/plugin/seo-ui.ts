@@ -4604,6 +4604,7 @@ ${structureRules}`
         counts: score ? score.counts : null, jobId: job.id, scheduled: job.scheduled,
         depthContent: job.depthContent, depthSpeed: job.depthSpeed,
         semcoreMsg: job.semcoreMsg, semcorePath: job.semcorePath,
+        sitemapCoverage: report?.sitemapCoverage ?? null,
       }
       const prev = readRuns(RESULTS_ROOT).runs.filter((r) => r.host === job.host).slice(-1)[0] || null
       const prevReport = prev ? readAuditReport(prev.dir) : null
