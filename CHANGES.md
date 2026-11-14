@@ -5,6 +5,25 @@
 минимально. После этих изменений все 37 тестов проходят (`node --test .opencode/tests/`),
 включая e2e-панель на настоящем HTTP-сервере.
 
+## 26. GEO/AEO аудит (пункт 5.1)
+
+Новый пункт технического аудита — готовность сайта к ИИ-поисковикам
+(ChatGPT, Claude, Perplexity, Яндекс Алиса и др.).
+
+- Навык `geo-aeo-audit` (SKILL.md + скрипт `scripts/geo_aeo_audit.py`): проверяет
+  доступность для ИИ-краулеров (GPTBot, Google-Extended, ClaudeBot, PerplexityBot и др.)
+  в robots.txt, наличие/корректность `llms.txt`, структурированные данные
+  (JSON-LD/Microdata: Article, Organization, BreadcrumbList, FAQPage, Product),
+  OpenGraph-теги, работу по https, `rel=canonical` и читаемость URL. Выход —
+  `GEO-AEO аудит.docx` + `geo_aeo.json`.
+- Данные берутся из общего коллектора `site_collect.py` (один обход) + прямой
+  проверки `/llms.txt`.
+- В панели: чекбокс «5.1. GEO/AEO аудит» в форме аудита; в `POINT_SKILLS` появился
+  маппинг `5.1 → geo-aeo-audit` (работает «Повторить» и расписание).
+- Машинные правила GEO — в `audit-rules.json` (секция `geo_aeo`): список
+  ИИ-краулеров, требуемые типы разметки, OpenGraph, https, llms.txt.
+- Тест `geo_aeo.test.mjs` проверяет правила, наличие навыка/скрипта и маппинг 5.1.
+
 ## 1. «Повторить» и планировщик не теряют параметры (план п.1)
 
 До этого момента кнопка «Повторить» и расписание брали из истории только список

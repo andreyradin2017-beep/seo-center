@@ -17,5 +17,13 @@
   "jsonld": {
     "allowed_jsonld_types": ["Article", "NewsArticle", "BlogPosting", "Movie", "Review", "Recipe", "QAPage"],
     "required_content_fields": ["@id", "headline", "text"]
+  },
+  "geo_aeo": {
+    "ai_crawlers": ["GPTBot", "Google-Extended", "ClaudeBot", "PerplexityBot", "anthropic-ai", "cohere-ai", "AI2", "facebookexternalhit", "twitterbot"],
+    "required_jsonld_types": ["Article", "NewsArticle", "BlogPosting", "Organization", "LocalBusiness", "BreadcrumbList", "FAQPage", "Product"],
+    "required_opengraph": ["og:title", "og:description", "og:image", "og:url", "og:type"],
+    "required_https": true,
+    "required_llms_txt": true,
+    "max_url_depth": 4
   }
 }

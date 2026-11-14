@@ -81,7 +81,7 @@ const FREE_TOOLS = new Set(
     .filter(Boolean),
 )
 
-const SCRIPT_POINTS = new Set(["2.1", "2.2", "2.3", "2.4", "2.5", "3.1", "3.2", "4.1", "4.2"])
+const SCRIPT_POINTS = new Set(["2.1", "2.2", "2.3", "2.4", "2.5", "3.1", "3.2", "4.1", "4.2", "5.1"])
 // Соответствие «номер пункта → навык»: по нему повторяются прогоны и строятся
 // расписания (в истории хранятся номера, а запуску нужны имена навыков).
 const POINT_SKILLS: Record<string, string> = {
@@ -90,6 +90,7 @@ const POINT_SKILLS: Record<string, string> = {
   "2.1": "tekstovyj-kontent", "2.2": "oformlenie-teksta", "2.3": "sluzhebnye-tegi",
   "2.4": "izobrazheniya", "2.5": "ishodyashchie-ssylki", "2.6": "mikrorazmetka",
   "3.1": "snippety", "3.2": "vneshnie-ssylki", "4.1": "skorost-zagruzki", "4.2": "pereboi-v-rabote",
+  "5.1": "geo-aeo-audit",
 }
 // Очередь: после завершения free-задачи (скрипты) запускаем flash-задачу (модельные пункты + сборка).
 const auditFollowups = new Map<string, {
@@ -2015,6 +2016,12 @@ function buildUiHtml(port: number, lanIp: string | null, auth?: AuthInfo | null)
           <div class="check-grid">
             <label class="check"><input type="checkbox" data-point="4.1" data-skill="skorost-zagruzki"><span>4.1. Скорость загрузки страниц</span></label>
             <label class="check"><input type="checkbox" data-point="4.2" data-skill="pereboi-v-rabote"><span>4.2. Перебои в работе сайта</span></label>
+          </div>
+        </div>
+        <div class="audit-group">
+          <div class="audit-group-title">Готовность к ИИ-поиску (GEO/AEO)</div>
+          <div class="check-grid">
+            <label class="check"><input type="checkbox" data-point="5.1" data-skill="geo-aeo-audit"><span>5.1. GEO/AEO аудит (поиск в ИИ-поисковиках)</span></label>
           </div>
         </div>
       </div>
