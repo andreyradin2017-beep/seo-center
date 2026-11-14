@@ -199,6 +199,17 @@ async function openReport(id){
     });
     h+='</table>';
   }
+  if(r.report?.sitemapCoverage){
+    const sc=r.report.sitemapCoverage;
+    h+='<div class="card" style="margin-top:12px"><h3>Покрытие sitemap</h3>';
+    h+='<p>URL в sitemap: <b>'+sc.sitemapUrls+'</b>, доступно: <b>'+sc.accessible+'</b>, недоступно: <b>'+sc.inaccessible+'</b>, покрытие: <b>'+(sc.coveragePct||0)+'%</b></p>';
+    if(sc.inaccessibleList && sc.inaccessibleList.length){
+      h+='<p>Недоступные URL:</p><ul>';
+      sc.inaccessibleList.slice(0,10).forEach(function(u){h+='<li>'+esc(u.url)+' ('+esc(u.status)+')</li>'});
+      h+='</ul>';
+    }
+    h+='</div>';
+  }
   $('#report').innerHTML=h;
 }
 
