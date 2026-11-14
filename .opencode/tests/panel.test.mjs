@@ -141,11 +141,12 @@ test("repeat queues the audit and issue status rejects an unknown id", async () 
 })
 
 test("dry-run audit does not write to history", async () => {
+  const before = (await json(await get("/api/insights/history?host=example.com"))).body.runs.length
   const run = await json(await post("/run-audit", { url: "https://example.com/", points: [{ point: "2.3", skill: "sluzhebnye-tegi" }], dryRun: true }))
   assert.equal(run.body.ok, true)
   assert.equal(run.body.dryRun, true)
-  const history = await json(await get("/api/insights/history?host=example.com"))
-  assert.equal(history.body.runs.length, 0)
+  const after = (await json(await get("/api/insights/history?host=example.com"))).body.runs.length
+  assert.equal(after, before)
 
   // Но задача должна быть в очереди
   const queue = await json(await get("/api/audit-queue"))

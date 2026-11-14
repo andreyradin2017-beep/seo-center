@@ -4563,13 +4563,14 @@ ${structureRules}`
     dryRun?: boolean
   }): any {
     console.log("DEBUG enqueueAudit called, args keys: " + Object.keys(args) + ", has dryRun: " + ("dryRun" in args) + ", args.dryRun: " + args.dryRun + ", args[\"dryRun\"]: " + args["dryRun"])
+    const { site } = args
     const points = (args.points || []).filter((p) => p && p.point && p.skill)
     if (!site) return { ok: false, error: "URL сайта не указан" }
     if (!points.length) return { ok: false, error: "Не выбран ни один пункт аудита" }
     const host = hostFromUrl(site) || deriveHostFromText(site) || "project"
-    // Запрет одновременного аудита одного и того же сайта.
+    // Запрет одновременного аудита одного и того же сайта (dry-run — имитация, не мешает).
     const existing = [...auditJobs.values()].find((j) => j.host === host)
-    if (existing) {
+    if (existing && !args.dryRun) {
       return { ok: false, error: existing.status === "running"
         ? "Аудит этого сайта уже запущен и выполняется. Дождитесь завершения."
         : "Аудит этого сайта уже стоит в очереди." }
@@ -4593,7 +4594,7 @@ ${structureRules}`
     if (!args.dryRun) {
       pushHistory({ at: nowIso(), user: job.owner, tool: "audit", site: host, status: "queued", jobId: job.id })
     }
-    if (auditRunning < auditMaxConcurrent()) {
+    if (!job.dryRun && auditRunning < auditMaxConcurrent()) {
       launchAuditJob(job)
       const result = { ok: true, host, outDir, jobId: job.id, taskId: job.currentTaskId,
         queued: false, running: auditRunning, max: auditMaxConcurrent(), dryRun: args.dryRun === true }
@@ -4604,6 +4605,7 @@ ${structureRules}`
     const result2 = { ok: true, host, outDir, jobId: job.id, queued: true, position,
       eta: fmtEta(auditEtaMinutes(position)), running: auditRunning, max: auditMaxConcurrent(), dryRun: args.dryRun === true }
     return result2
+  }
 
   // ---------- Результат прогона: audit.json → история, проблемы, Telegram ----------
   function readAuditReport(dir: string): AuditReport | null {
