@@ -57,8 +57,10 @@ SEO_UI_PORT=4180 node --experimental-strip-types .opencode/plugin/seo-ui.ts
 └── tools/seo_collect/      # общий HTTP-кэш для Python-скриптов + тесты
 ```
 
-Тесты: `npm test` → `node --test .opencode/tests/` (33 теста:
+Тесты: `npm test` → `node --test .opencode/tests/` (48 теста:
 security, audit-store, generators, integrations, panel e2e).
+Все режимы панели проверены в живом прогоне на реальном сайте https://qegg.ru
+(раздел «Что проверили» в CHANGES.md).
 
 ## 3. Основные разделы панели
 

@@ -1,9 +1,10 @@
-import type { Plugin } from "@opencode-ai/plugin"
+import { Plugin } from "@opencode/plugin"
 import { networkInterfaces, homedir } from "node:os"
 import { join, resolve, relative, sep, basename, dirname } from "node:path"
 import { readdirSync, statSync, lstatSync, realpathSync, readFileSync, writeFileSync, appendFileSync, chmodSync, existsSync, mkdirSync, rmSync, renameSync, statfsSync } from "node:fs"
 import { createServer } from "node:http"
 import { spawn } from "node:child_process"
+import { connect as tcpConnect } from "node:net"
 import { randomBytes } from "node:crypto"
 import { constantTimeEqual, createAuthToken, credentialVersion, hasGlobalAccess, hashPassword, parseAuthToken, safePath, sanitizeOwnerName, verifyPassword } from "../lib/security.ts"
 import { writeJsonAtomic } from "../lib/json-store.ts"
@@ -38,26 +39,26 @@ const RESULTS_EXTS = [".csv", ".xlsx", ".xls", ".docx", ".doc", ".md", ".html"]
 // с 403 «free tier can only be used from within OpenCode».
 // Изменить: переменная окружения SEO_CENTER_MODEL=providerID/modelID.
 const SEO_CENTER_MODEL = (() => {
-  const raw = (process.env.SEO_CENTER_MODEL || "opencode-go/deepseek-v4.1-flash").trim()
+  const raw = (process.env.SEO_CENTER_MODEL || "plusvibe/deepseek-v4-flash-0731:free").trim()
   const i = raw.indexOf("/")
-  if (i <= 0 || i === raw.length - 1) return { providerID: "opencode-go", modelID: "deepseek-v4.1-flash" }
+  if (i <= 0 || i === raw.length - 1) return { providerID: "plusvibe", modelID: "deepseek-v4-flash-0731:free" }
   return { providerID: raw.slice(0, i), modelID: raw.slice(i + 1) }
 })()
 
 // Дешёвая/бесплатная модель для «скриптовых» пунктов аудита (2.1–2.5, 3.1, 3.2, 4.1, 4.2):
 // всю работу делает Python-скрипт, поэтому модель экономится без потери качества.
 const SEO_CENTER_MODEL_FREE = (() => {
-  const raw = (process.env.SEO_CENTER_MODEL_FREE || "opencode-go/longcat-2.5-preview-free").trim()
+  const raw = (process.env.SEO_CENTER_MODEL_FREE || "plusvibe/deepseek-v4-flash-0731:free").trim()
   const i = raw.indexOf("/")
-  if (i <= 0 || i === raw.length - 1) return { providerID: "opencode-go", modelID: "longcat-2.5-preview-free" }
+  if (i <= 0 || i === raw.length - 1) return { providerID: "plusvibe", modelID: "deepseek-v4-flash-0731:free" }
   return { providerID: raw.slice(0, i), modelID: raw.slice(i + 1) }
 })()
 
 // Второй бесплатный вариант — используется, если первый капризничает (каскад: free1 → free2 → flash).
 const SEO_CENTER_MODEL_FREE2 = (() => {
-  const raw = (process.env.SEO_CENTER_MODEL_FREE2 || "opencode-go/space-bunny-free").trim()
+  const raw = (process.env.SEO_CENTER_MODEL_FREE2 || "plusvibe/deepseek-v4-flash-0731:free").trim()
   const i = raw.indexOf("/")
-  if (i <= 0 || i === raw.length - 1) return { providerID: "opencode-go", modelID: "space-bunny-free" }
+  if (i <= 0 || i === raw.length - 1) return { providerID: "plusvibe", modelID: "deepseek-v4-flash-0731:free" }
   return { providerID: raw.slice(0, i), modelID: raw.slice(i + 1) }
 })()
 
@@ -65,9 +66,9 @@ const SEO_CENTER_MODEL_FREE2 = (() => {
 // Генерация идёт на основной модели, полировка — на этой (по умолчанию qwen3.8-max).
 // Переопределяется: SEO_CENTER_MODEL_POLISH="provider/model".
 const SEO_CENTER_MODEL_POLISH = (() => {
-  const raw = (process.env.SEO_CENTER_MODEL_POLISH || "opencode-go/qwen3.8-max").trim()
+  const raw = (process.env.SEO_CENTER_MODEL_POLISH || "plusvibe/deepseek-v4-flash-0731:free").trim()
   const i = raw.indexOf("/")
-  if (i <= 0 || i === raw.length - 1) return { providerID: "opencode-go", modelID: "qwen3.8-max" }
+  if (i <= 0 || i === raw.length - 1) return { providerID: "plusvibe", modelID: "deepseek-v4-flash-0731:free" }
   return { providerID: raw.slice(0, i), modelID: raw.slice(i + 1) }
 })()
 
@@ -6870,7 +6871,10 @@ ${instruction}
   startAuditScheduler()
 
   // Desktop has no visible plugin console, so open the local UI automatically.
-  if (process.platform === "win32" && process.env.OPENCODE_SEO_UI_NO_OPEN !== "1") {
+  // Отключено по умолчанию на Windows: автозапуск через powershell Start-Process
+  // вызывал всплывающие окна PowerShell при каждом (пере)запуске плагина.
+  // Включить при необходимости: SEO_UI_AUTO_OPEN=1.
+  if (process.platform === "win32" && process.env.SEO_UI_AUTO_OPEN === "1") {
     try {
       const browser = spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-Command", "Start-Process", urls[0]], {
         detached: true,
@@ -6913,19 +6917,17 @@ ${instruction}
   }
 
   // Проверяет, отвечает ли geo-трекер на своём порту (реальный статус, а не env).
+  // ВАЖНО: на Windows НЕ спавним powershell (Test-NetConnection) — это вызывало
+  // всплывающие окна PowerShell каждые несколько секунд. Используем нативный TCP.
   async function probeTrackerPort(): Promise<boolean> {
     return await new Promise<boolean>((resolve) => {
       try {
-        const probe = spawn(process.platform === "win32" ? "powershell.exe" : "bash", [
-          process.platform === "win32" ? "-Command" : "-lc",
-          process.platform === "win32"
-            ? `(Test-NetConnection -ComputerName 127.0.0.1 -Port ${TRACKER_PORT}).TcpTestSucceeded`
-            : `curl -sS -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:${TRACKER_PORT}/ 2>/dev/null || echo 000`,
-        ], { stdio: ["ignore", "pipe", "ignore"] })
-        let out = ""
-        probe.stdout.on("data", (d) => { out += String(d) })
-        probe.on("close", () => resolve(process.platform === "win32" ? /True/i.test(out) : /200|30\d/.test(out)))
-        probe.on("error", () => resolve(false))
+        const sock = tcpConnect({ host: "127.0.0.1", port: TRACKER_PORT, timeout: 2000 })
+        let done = false
+        const finish = (ok: boolean) => { if (!done) { done = true; try { sock.destroy() } catch {} resolve(ok) } }
+        sock.once("connect", () => finish(true))
+        sock.once("timeout", () => finish(false))
+        sock.once("error", () => finish(false))
       } catch { resolve(false) }
     })
   }
@@ -6986,18 +6988,15 @@ ${instruction}
     }
     // Если порт уже слушается — значит трекер уже запущен (вручную или прошлым
     // процессом). Не поднимаем второй, просто фиксируем «готов».
+    // Проверка через нативный TCP (без спавна powershell — он вызывал окна).
     const busy = await new Promise<boolean>((resolve) => {
       try {
-        const probe = spawn(process.platform === "win32" ? "powershell.exe" : "bash", [
-          process.platform === "win32" ? "-Command" : "-lc",
-          process.platform === "win32"
-            ? `(Test-NetConnection -ComputerName 127.0.0.1 -Port ${TRACKER_PORT}).TcpTestSucceeded`
-            : `command -v ss >/dev/null 2>&1 && ss -tln | grep -q ':${TRACKER_PORT} ' && echo busy || echo free`,
-        ], { stdio: ["ignore", "pipe", "ignore"] })
-        let out = ""
-        probe.stdout.on("data", (d) => { out += String(d) })
-        probe.on("close", () => resolve(/busy|True/i.test(out)))
-        probe.on("error", () => resolve(false))
+        const sock = tcpConnect({ host: "127.0.0.1", port: TRACKER_PORT, timeout: 1000 })
+        let done = false
+        const finish = (ok: boolean) => { if (!done) { done = true; try { sock.destroy() } catch {} resolve(ok) } }
+        sock.once("connect", () => finish(true))
+        sock.once("timeout", () => finish(false))
+        sock.once("error", () => finish(false))
       } catch { resolve(false) }
     })
     if (busy) {
@@ -7255,21 +7254,111 @@ ${instruction}
   return { stop, handleEvent }
 }
 
-// Плагин opencode: обёртка над createSeoPanel (in-process клиент).
-export default (async ({ client, directory }: any) => {
-  if (client === undefined) {
-    log("client is undefined — plugin only works inside a running opencode instance")
-    return {}
+// Плагин opencode (V2): обёртка над createSeoPanel (in-process клиент).
+// Адаптируем V2-контекст (@opencode/plugin) к тем вызовам client.session.*,
+// которые использует createSeoPanel (V1-клиент): create / promptAsync / abort.
+//
+// ВАЖНО о событиях: createSeoPanel.handleEvent() написан под V1-клиент
+// (@opencode-ai/plugin), где данные события лежали в event.properties.
+// В V2 (@opencode/plugin) данные лежат в event.data, а имена части событий
+// изменены (message.updated → session.*, message.part.updated → session.part.*).
+// normalizeEvent() приводит V2-событие к V1-виду, иначе панель не видит
+// session.idle / session.status и задачи навсегда зависают в статусе "running".
+function normalizeEvent(ev: any): any {
+  if (!ev || typeof ev !== "object") return ev
+  const type: string = ev.type || ""
+  const data: any = (ev.data && typeof ev.data === "object") ? ev.data : {}
+  const out: any = { ...ev }
+  // Общее правило V2→V1: данные из data "перекладываем" в properties.
+  out.properties = { ...data }
+  if (type === "session.created" || type === "session.updated") {
+    // V1 панель читает properties.info.id как идентификатор сессии.
+    out.properties.info = data.info ?? { id: data.sessionID }
   }
-  // Развязанный режим: панель поднимает отдельный процесс (см. seo-panel/panel.ts),
-  // а плагин в агенте только молчит — тогда рестарт панели не трогает агента.
-  if (process.env.SEO_PANEL_EXTERNAL === "1") {
-    log("panel is external (SEO_PANEL_EXTERNAL=1) — панель поднимает отдельный процесс")
-    return {}
+  if (type === "session.text.delta" || type === "session.text.ended" || type === "session.part.updated") {
+    // Аналог V1 message.updated / message.part.updated: В V1 сессия была в
+    // properties.part.sessionID / properties.info.sessionID. Отдаём несколько
+    // вариантов, чтобы V1-код смог найти поле сессии.
+    if (data.sessionID) {
+      out.properties.sessionID = data.sessionID
+      out.properties.part = { ...(data.part ?? {}), sessionID: data.sessionID }
+      out.properties.info = { ...(data.info ?? {}), id: data.sessionID, sessionID: data.sessionID }
+    }
+    if (data.part || data.text !== undefined) {
+      if (!out.properties.part) out.properties.part = data.part ?? {}
+    }
   }
-  const panel = await createSeoPanel({ client, directory, projectDir: directory || process.cwd() })
-  return {
-    event: async ({ event }: any) => { try { await panel.handleEvent(event) } catch (e) { log("event handler failed: " + String(e)) } },
-    dispose: async () => { try { panel.stop() } catch {} },
+  if (type === "session.execution.failed" || type === "session.step.failed" || type === "session.error") {
+    // V1 handleEvent читает properties.error (текст) и properties.sessionID.
+    if (data.sessionID) out.properties.sessionID = data.sessionID
+    if (data.error !== undefined && (out.properties.error === undefined || out.properties.error === null)) {
+      out.properties.error = data.error
+    }
   }
-}) satisfies Plugin
+  // В V2 событие session.idle НЕ эмитится: замещает session.execution.succeeded.
+  // V1-панель переводит задачу в done только по session.idle (scheduleTaskDone),
+  // поэтому маппим завершение выполнения на знакомый тип.
+  if (type === "session.execution.succeeded") {
+    out.type = "session.idle"
+    if (data.sessionID) out.properties.sessionID = data.sessionID
+  }
+  return out
+}
+
+export default Plugin.define({
+  id: "seo-ui",
+  async setup(ctx) {
+    const client: any = {
+      session: {
+        create: async (args: any) => {
+          const body = args && args.body !== undefined ? args.body : args
+          const s = await ctx.session.create(body)
+          return { data: s, id: s?.id, ok: true }
+        },
+        promptAsync: async (args: any) => {
+          const sessionID = args?.path?.id
+          if (!sessionID) throw new Error("promptAsync: no session id")
+          const body = args?.body ?? {}
+          const text = Array.isArray(body.parts)
+            ? body.parts.map((p: any) => (p?.text != null ? p.text : "")).join("\n")
+            : (body.text ?? "")
+          const model = body.model
+          await ctx.session.prompt({
+            sessionID,
+            text,
+            ...(model ? { model: { id: model.modelID, providerID: model.providerID } } : {}),
+          })
+          return { ok: true }
+        },
+        abort: async (args: any) => {
+          const sessionID = args?.path?.id
+          if (sessionID) await ctx.session.interrupt({ sessionID })
+          return { ok: true }
+        },
+      },
+    }
+    const directory = ctx.location.dir || ctx.location.directory || process.cwd()
+    const projectDir = process.env.SEO_PROJECT_DIR || directory
+    const panel = await createSeoPanel({ client, directory, projectDir })
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+          try {
+            const t: string = event?.type ?? "?"
+            if (t === "session.idle" || t === "session.status" || t.startsWith("session.execution") || t.startsWith("session.step") || t === "session.created" || t === "session.text.ended") {
+              try { appendFileSync(join(projectDir, "seo-events.log"), new Date().toISOString() + " type=" + t + " sid=" + (event?.data?.sessionID ?? "?") + "\n") } catch {}
+            }
+            await panel.handleEvent(normalizeEvent(event))
+          } catch (e) { log("event handler failed: " + String(e)) }
+        }
+      } catch (e) {
+        log("event subscription ended: " + String(e))
+      }
+    })()
+    return () => {
+      try { controller.abort() } catch {}
+      try { panel.stop() } catch {}
+    }
+  },
+})
